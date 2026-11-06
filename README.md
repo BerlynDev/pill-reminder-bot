@@ -10,6 +10,7 @@ A personal Telegram bot that sends scheduled pill reminders and tracks adherence
 - Remembers unanswered reminders across restarts (`state.json`)
 - Catches up on reminders missed while the bot was offline or the computer was asleep
 - Only talks to you: messages from anyone else are ignored
+- English or Spanish (`BOT_LANGUAGE=en` / `es` in `.env`)
 - No browser, no extra packages: just Node.js and the official Telegram Bot API
 
 ## Setup
@@ -37,6 +38,17 @@ If several pills are waiting and it's unclear which one you mean, the bot asks w
 `SI`, `Y`, `N`, ✅, ❌, 👍 and 👎 work too.
 
 Commands: `/status` (today's schedule and what's waiting), `/help`.
+
+## Language / Idioma
+Set `BOT_LANGUAGE` in `.env`:
+
+| Value | Bot speaks | Buttons | Commands |
+|---|---|---|---|
+| `en` (default) | English | ✅ Taken / ⏭️ Skip | `/status`, `/help` |
+| `es` | Español | ✅ Tomada / ⏭️ Omitir | `/estado`, `/ayuda` |
+
+Typed answers work in both: `YES`/`SÍ`/`SI`, `NO`, `YES ALL`/`SÍ TODAS`. Commands in either language are always accepted.
+All texts live in `messages.js`; to add a language, copy the `en` block and translate it. Terminal logs stay in English.
 
 ## Missed reminders
 If the bot wasn't running at a pill's time (restart, crash, computer asleep), it checks as soon as it's back:
