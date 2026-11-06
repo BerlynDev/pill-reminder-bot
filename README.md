@@ -7,6 +7,19 @@ A personal WhatsApp bot that sends scheduled pill reminders and tracks adherence
 - WhatsApp reminders at the configured times
 - Re-sends until you confirm with "YES"
 - Logs every response to `history.json`
+- Remembers unanswered reminders across restarts (`state.json`)
+
+## Replying
+| Reply | Marks |
+|---|---|
+| `YES` / `NO` | the only pill waiting for a reply |
+| `YES` / `NO` as a reply to a reminder message | the pill that reminder was for |
+| `YES Aspirin` / `NO vit` | the pill matching that (partial) name |
+| `YES 2` | pill #2 in the list the bot sends when it's unsure |
+| `YES ALL` | every pill waiting for a reply |
+
+If several pills are waiting and it's unclear which one you mean, the bot asks instead of guessing.
+`SI`, `Y`, `N`, ✅, ❌, 👍 and 👎 work too.
 
 ## Setup
 1. `npm install`

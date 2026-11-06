@@ -1,5 +1,5 @@
 // ============================================================
-// PILL REMINDER BOT — full integrated version (Steps 1-9)
+// PILL REMINDER BOT
 // ============================================================
 
 // Load environment variables from .env into process.env
@@ -8,19 +8,18 @@ require('dotenv').config();
 const fs = require('fs');                              // built-in: read/write files
 const { Client, LocalAuth } = require('whatsapp-web.js');
 const qrcode = require('qrcode-terminal');
+const { loadState, saveState } = require('./state');
+const { parseReply, resolveTargets } = require('./replies');
+
+// NOTE: every message the bot sends must NOT start with a YES/NO word or
+// emoji (see replies.js), otherwise the bot would read its own messages
+// as replies.
 
 // ------------------------------------------------------------
-// CONSTANTS & STATE
+// CONSTANTS
 // ------------------------------------------------------------
 const HISTORY_FILE = './history.json';
-
-// Pills currently waiting for a YES/NO reply.
-// Map<pillName, { sentAt: Date, remindersSent: number }>
-const pendingReminders = new Map();
-
-// When each pill was last fired — prevents double-firing within same minute.
-// Map<pillName, Date>
-const lastFiredAt = new Map();
+const STATE_FILE = './state.json';
 
 // ------------------------------------------------------------
 // LOAD PILL CONFIG
@@ -57,6 +56,68 @@ function logResponse(entry) {
 }
 
 // ------------------------------------------------------------
+// STATE — saved to state.json so a restart doesn't lose anything
+// ------------------------------------------------------------
+const config = loadPills();
+
+// Pills currently waiting for a YES/NO reply.
+// Map<pillName, { firstSentAt: Date, lastSentAt: Date,
+//                 remindersSent: number, messageIds: string[] }>
+// When each pill was last fired — prevents double-firing within same minute.
+// Map<pillName, Date>
+const { pending: pendingReminders, lastFiredAt } = loadState(STATE_FILE);
+
+function persist() {
+    try {
+        saveState(STATE_FILE, { pending: pendingReminders, lastFiredAt });
+    } catch (err) {
+        console.error('⚠️  Could not save state.json:', err.message);
+    }
+}
+
+// Drop pending reminders for pills that were removed from pills.json
+for (const name of pendingReminders.keys()) {
+    if (!config.pills.some(p => p.name === name)) {
+        pendingReminders.delete(name);
+        console.log(`🗑️  "${name}" is no longer in pills.json, dropping its pending reminder`);
+    }
+}
+persist();
+
+if (pendingReminders.size > 0) {
+    console.log(`⏳ Restored ${pendingReminders.size} pending reminder(s) from ${STATE_FILE}`);
+}
+
+// Pending pill names, oldest reminder first (used for numbered lists)
+function pendingNames() {
+    return [...pendingReminders]
+        .sort((a, b) => a[1].firstSentAt - b[1].firstSentAt)
+        .map(([name]) => name);
+}
+
+// Which pending pill a reminder/nag message belongs to (null if none)
+function pillForMessageId(messageId) {
+    for (const [name, info] of pendingReminders) {
+        if (info.messageIds.includes(messageId)) return name;
+    }
+    return null;
+}
+
+function numberedList(names) {
+    return names.map((name, i) => `${i + 1}. ${name}`).join('\n');
+}
+
+// How to answer a reminder — explains how to pick a pill when
+// more than one is waiting.
+function replyInstructions(pillName) {
+    const othersWaiting = [...pendingReminders.keys()].some(n => n !== pillName);
+    return othersWaiting
+        ? `Other pills are waiting too, so reply to *this message* with *YES* or *NO*, ` +
+          `or write *YES ${pillName}* / *NO ${pillName}*.`
+        : `Reply *YES* when you've taken it, or *NO* to skip.`;
+}
+
+// ------------------------------------------------------------
 // MAIN TICK — runs every 20s via setInterval.
 // Handles initial reminders AND nags in one place.
 // ------------------------------------------------------------
@@ -80,13 +141,20 @@ async function tick(client, myNumber, config) {
             `💊 *Pill Reminder*\n\n` +
             `It's ${pill.time} — time to take your *${pill.name}* (${pill.dosage}).\n` +
             (pill.notes ? `📝 _${pill.notes}_\n\n` : `\n`) +
-            `Reply *YES* when you've taken it, or *NO* to skip.`;
+            replyInstructions(pill.name);
 
         try {
-            await client.sendMessage(myNumber, reminderText);
-            console.log(`⏰ [${now.toLocaleTimeString()}] Sent reminder for ${pill.name}`);
-            pendingReminders.set(pill.name, { sentAt: new Date(), remindersSent: 1 });
-            lastFiredAt.set(pill.name, new Date());
+            const sent = await client.sendMessage(myNumber, reminderText);
+            const sentAt = new Date();
+            console.log(`⏰ [${sentAt.toLocaleTimeString()}] Sent reminder for ${pill.name}`);
+            pendingReminders.set(pill.name, {
+                firstSentAt: sentAt,
+                lastSentAt: sentAt,
+                remindersSent: 1,
+                messageIds: [sent.id.id]
+            });
+            lastFiredAt.set(pill.name, sentAt);
+            persist();
         } catch (err) {
             console.error(`❌ Failed to send reminder for ${pill.name}:`, err.message);
         }
@@ -94,22 +162,22 @@ async function tick(client, myNumber, config) {
 
     // ---- 2. Nag any pending reminders whose interval has elapsed ----
     for (const [pillName, info] of pendingReminders) {
-        const minsAgo = (new Date() - info.sentAt) / 60000;
+        const minsAgo = (new Date() - info.lastSentAt) / 60000;
         if (minsAgo < config.reminderIntervalMinutes) continue;
 
         const nagText =
             `🔁 *Still waiting on you!*\n\n` +
             `Did you take your *${pillName}* yet?\n` +
             `(This is reminder #${info.remindersSent + 1})\n\n` +
-            `Reply *YES* when you've taken it, or *NO* to skip.`;
+            replyInstructions(pillName);
 
         try {
-            await client.sendMessage(myNumber, nagText);
+            const sent = await client.sendMessage(myNumber, nagText);
             console.log(`🔁 Nag #${info.remindersSent + 1} sent for ${pillName} (${minsAgo.toFixed(1)} min since last)`);
-            pendingReminders.set(pillName, {
-                sentAt: new Date(),
-                remindersSent: info.remindersSent + 1
-            });
+            info.lastSentAt = new Date();
+            info.remindersSent += 1;
+            info.messageIds.push(sent.id.id);
+            persist();
         } catch (err) {
             console.error(`❌ Failed to send nag for ${pillName}:`, err.message);
         }
@@ -117,10 +185,8 @@ async function tick(client, myNumber, config) {
 }
 
 // ------------------------------------------------------------
-// LOAD CONFIG & CREATE WHATSAPP CLIENT
+// CREATE WHATSAPP CLIENT
 // ------------------------------------------------------------
-const config = loadPills();
-
 const client = new Client({
     authStrategy: new LocalAuth(),
     puppeteer: {
@@ -150,15 +216,18 @@ client.on('ready', async () => {
         return;
     }
 
-    // Startup message listing loaded pills
+    // Startup message listing loaded pills (and anything still unanswered)
     const pillList = config.pills
         .map(p => `  • ${p.time} — ${p.name} (${p.dosage})`)
         .join('\n');
-    const message =
+    let message =
         `👋 Pill reminder bot is online!\n\n` +
         `Loaded ${config.pills.length} pill(s):\n${pillList}\n\n` +
         `I'll remind you every ${config.reminderIntervalMinutes} min ` +
         `until you reply YES.`;
+    if (pendingReminders.size > 0) {
+        message += `\n\n⏳ Still waiting on a reply for:\n${numberedList(pendingNames())}`;
+    }
 
     try {
         await client.sendMessage(myNumber, message);
@@ -180,64 +249,94 @@ client.on('ready', async () => {
 
 // ------------------------------------------------------------
 // EVENT: incoming message — handle YES / NO replies
+//
+// Supported replies:
+//   YES / NO                 → the only waiting pill
+//   YES / NO quoting a reminder → the pill that reminder was for
+//   YES Aspirin / NO vit     → pill by (partial) name
+//   YES 2                    → pill #2 in the "which one?" list
+//   YES ALL                  → every waiting pill
 // ------------------------------------------------------------
 client.on('message_create', async (msg) => {
-    const myNumber = process.env.MY_WHATSAPP_NUMBER;
-
     // Only react to messages YOU send (your own replies in self-chat)
     if (!msg.fromMe) return;
 
-    const text = msg.body.trim().toLowerCase();
+    const parsed = parseReply(msg.body);
+    if (!parsed) return;  // not a YES/NO — ignore
 
-    // Decide whether this is a YES, NO, or something else
-    let reply;
-    if (['yes', 'y', 'si', 'sí', '✅', '👍'].includes(text)) {
-        reply = 'yes';
-    } else if (['no', 'n', '❌', '👎'].includes(text)) {
-        reply = 'no';
-    } else {
-        return;  // not a YES/NO — ignore
-    }
+    const names = pendingNames();
 
-    console.log(`💬 Got reply "${msg.body}" → interpreted as ${reply.toUpperCase()}`);
+    // "y mañana compro leche" with nothing pending is just a note, not a reply
+    if (parsed.target && names.length === 0) return;
 
-    // If nothing pending, just tell the user
-    if (pendingReminders.size === 0) {
-        await client.sendMessage(myNumber, `🤔 No pill reminders are waiting for a reply right now.`);
-        return;
-    }
+    const myNumber = process.env.MY_WHATSAPP_NUMBER;
+    const send = (text) => client.sendMessage(myNumber, text)
+        .catch(err => console.error('❌ Failed to send reply:', err.message));
 
-    // Find the most-recently-sent pending pill
-    let mostRecentName = null;
-    let mostRecentInfo = null;
-    for (const [pillName, info] of pendingReminders) {
-        if (!mostRecentInfo || info.sentAt > mostRecentInfo.sentAt) {
-            mostRecentName = pillName;
-            mostRecentInfo = info;
+    console.log(`💬 Got reply "${msg.body}" → ${parsed.response.toUpperCase()}` +
+        (parsed.target ? ` for "${parsed.target}"` : ''));
+
+    // If you swiped-to-reply on a reminder, use the pill it was for.
+    // Quoting any other message is ignored.
+    let quote = null;
+    if (msg.hasQuotedMsg) {
+        try {
+            const quoted = await msg.getQuotedMessage();
+            const pillName = pillForMessageId(quoted.id.id);
+            const isReminder = /^(💊 \*Pill Reminder\*|🔁 \*Still waiting on you!\*)/.test(quoted.body);
+            if (pillName || isReminder) quote = { pillName };
+        } catch (err) {
+            console.error('⚠️  Could not read quoted message:', err.message);
         }
     }
 
-    // Clear from the pending list
-    pendingReminders.delete(mostRecentName);
-    console.log(`   ✅ Cleared "${mostRecentName}" from pending (${pendingReminders.size} remaining)`);
+    const result = resolveTargets(parsed.target, names, quote);
+    const word = parsed.response.toUpperCase();
 
-    // Log to history.json for long-term tracking
-    logResponse({
-        timestamp: new Date().toISOString(),
-        pillName: mostRecentName,
-        response: reply,
-        remindersSent: mostRecentInfo.remindersSent,
-        originalReminderAt: mostRecentInfo.sentAt.toISOString()
-    });
-
-    // Acknowledge to the user
-    if (reply === 'yes') {
-        await client.sendMessage(myNumber,
-            `🎉 Great! Logged that you took your *${mostRecentName}*. Stay healthy! 💪`);
-    } else {
-        await client.sendMessage(myNumber,
-            `👍 Noted — you skipped *${mostRecentName}*. I won't keep reminding you.`);
+    if (result.status === 'none_pending') {
+        await send(`🤔 No pill reminders are waiting for a reply right now.`);
+        return;
     }
+    if (result.status === 'stale_quote') {
+        await send(`🤔 That reminder isn't waiting for a reply anymore.\n\n` +
+            `Still waiting on:\n${numberedList(names)}`);
+        return;
+    }
+    if (result.status === 'ambiguous' || result.status === 'not_found') {
+        const intro =
+            result.status === 'not_found' ? `❓ I couldn't find a waiting pill called "${parsed.target}".` :
+            parsed.target ? `❓ More than one waiting pill matches "${parsed.target}". Which one?` :
+            `❓ More than one pill is waiting. Which one is this for?`;
+        await send(`${intro}\n\n${numberedList(names)}\n\n` +
+            `Reply e.g. *${word} ${names[0]}*, *${word} 1* or *${word} ALL*. ` +
+            `You can also reply directly to the reminder message.`);
+        return;
+    }
+
+    // ---- status === 'ok' ----
+    for (const pillName of result.pills) {
+        const info = pendingReminders.get(pillName);
+        pendingReminders.delete(pillName);
+
+        logResponse({
+            timestamp: new Date().toISOString(),
+            pillName,
+            response: parsed.response,
+            remindersSent: info.remindersSent,
+            originalReminderAt: info.firstSentAt.toISOString()
+        });
+    }
+    persist();
+    console.log(`   ✅ Cleared ${result.pills.join(', ')} from pending (${pendingReminders.size} remaining)`);
+
+    const pillList = result.pills.map(n => `*${n}*`).join(', ');
+    let ack = parsed.response === 'yes'
+        ? `🎉 Great! Logged that you took your ${pillList}. Stay healthy! 💪`
+        : `⏭️ Noted — you skipped ${pillList}. I won't keep reminding you.`;
+    if (pendingReminders.size > 0) {
+        ack += `\n\nStill waiting on:\n${numberedList(pendingNames())}`;
+    }
+    await send(ack);
 });
 
 // ------------------------------------------------------------
