@@ -8,6 +8,17 @@ A personal WhatsApp bot that sends scheduled pill reminders and tracks adherence
 - Re-sends until you confirm with "YES"
 - Logs every response to `history.json`
 - Remembers unanswered reminders across restarts (`state.json`)
+- Catches up on reminders missed while the bot was offline or the computer was asleep
+
+## Missed reminders
+If the bot wasn't running at a pill's time (restart, crash, computer asleep), it checks as soon as it's back:
+
+| How late | What happens |
+|---|---|
+| Within `missedReminderWindowMinutes` (default 180) | Sends the reminder marked **(late)**, then nags as usual |
+| Later than that | Sends a one-off ⚠️ *Missed reminder* notice; doesn't ask YES/NO for that dose |
+
+A pill that's new (or the very first run) whose time already passed today starts from its next scheduled time instead of sending an old reminder.
 
 ## Replying
 | Reply | Marks |
