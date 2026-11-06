@@ -21,3 +21,6 @@ history.json
 pills.json
 
 index.old.js
+# Pending reminders saved between restarts (medical data!)
+state.json
+state.json.tmp
