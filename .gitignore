@@ -2,7 +2,7 @@
 .env
 .env.local
 .env.*.local
-# WhatsApp session data — contains your login!
+# WhatsApp session data from the old WhatsApp version — contains a login!
 .wwebjs_auth/
 .wwebjs_cache/
 # Node.js dependencies — too big, can be reinstalled with `npm install`
