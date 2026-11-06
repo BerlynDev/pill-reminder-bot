@@ -2,7 +2,7 @@
 // MESSAGES — everything the bot says in Telegram, per language
 // ============================================================
 //
-// Pick the language with BOT_LANGUAGE in .env ("en" or "es").
+// Pick the language with BOT_LANGUAGE in .env ("es" or "en"); default "es".
 // Text uses Telegram HTML: wrap values from pills.json in esc() first —
 // callers pass names/dosages/notes already escaped.
 //
@@ -139,6 +139,7 @@ const es = {
 };
 
 const LANGUAGES = { en, es };
+const DEFAULT_LANGUAGE = 'es';
 
 // Commands work in every language (/status or /estado, /help or /ayuda)
 const COMMAND_ALIASES = {
@@ -151,7 +152,7 @@ const COMMAND_ALIASES = {
 const REMINDER_TITLES = Object.values(LANGUAGES).flatMap(l => [l.reminderTitle, l.nagTitle]);
 
 function getMessages(language) {
-    const code = String(language || 'en').trim().toLowerCase();
+    const code = String(language || DEFAULT_LANGUAGE).trim().toLowerCase();
     if (!LANGUAGES[code]) {
         throw new Error(`BOT_LANGUAGE "${language}" isn't supported — use one of: ${Object.keys(LANGUAGES).join(', ')}`);
     }
