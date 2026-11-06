@@ -101,10 +101,29 @@ function pendingNames() {
 // the ID of a message it just sent.
 function pillForQuotedMessage(quoted) {
     for (const [name, info] of pendingReminders) {
-        if (info.messageIds.includes(quoted.id.id)) return name;
+        if (quoted.id && info.messageIds.includes(quoted.id)) return name;
     }
     const match = /take your \*([^*]+)\*/.exec(quoted.body || '');
     return match && pendingReminders.has(match[1]) ? match[1] : null;
+}
+
+// The message a reply quotes, as { id, body }, or null.
+// msg.getQuotedMessage() throws on some WhatsApp Web versions, so fall
+// back to the quoted message data that arrives with the reply itself.
+async function readQuotedMessage(msg) {
+    if (!msg.hasQuotedMsg) return null;
+    try {
+        const quoted = await msg.getQuotedMessage();
+        if (quoted) return { id: quoted.id.id, body: quoted.body || '' };
+    } catch (err) {
+        // fall through to the raw data below
+    }
+    const data = msg._data || {};
+    if (data.quotedMsg) {
+        return { id: data.quotedStanzaID || null, body: data.quotedMsg.body || data.quotedMsg.caption || '' };
+    }
+    console.error('⚠️  Could not read the quoted message');
+    return null;
 }
 
 // ID of a message we sent, or null if WhatsApp didn't return it
@@ -366,15 +385,14 @@ client.on('message_create', async (msg) => {
     // If you swiped-to-reply on a reminder, use the pill it was for.
     // Quoting any other message is ignored.
     let quote = null;
-    if (msg.hasQuotedMsg) {
-        try {
-            const quoted = await msg.getQuotedMessage();
-            const pillName = pillForQuotedMessage(quoted);
-            const isReminder = /^(💊 \*Pill Reminder\*|🔁 \*Still waiting on you!\*)/.test(quoted.body);
-            if (pillName || isReminder) quote = { pillName };
-        } catch (err) {
-            console.error('⚠️  Could not read quoted message:', err.message);
-        }
+    const quoted = await readQuotedMessage(msg);
+    if (quoted) {
+        const pillName = pillForQuotedMessage(quoted);
+        const isReminder = /^(💊 \*Pill Reminder\*|🔁 \*Still waiting on you!\*)/.test(quoted.body);
+        if (pillName || isReminder) quote = { pillName };
+        console.log(pillName
+            ? `   ↩️  Reply to the reminder for ${pillName}`
+            : `   ↩️  Reply to a message that isn't a waiting reminder`);
     }
 
     const result = resolveTargets(parsed.target, names, quote);
