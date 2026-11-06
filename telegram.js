@@ -10,7 +10,25 @@ function createTelegram(token) {
     const scrub = (text) => String(text).split(token).join('<token>');
 
     // Call a Bot API method; returns its `result` or throws.
+    // Network blips (timeouts, dropped connections) and "too many requests"
+    // are retried a couple of times; real API errors (bad token, bad
+    // request) are not. getUpdates isn't retried here — its loop does that.
     async function call(method, params = {}) {
+        const maxRetries = method === 'getUpdates' ? 0 : 3;
+        for (let attempt = 0; ; attempt++) {
+            try {
+                return await callOnce(method, params);
+            } catch (err) {
+                const retryable = err.network || err.code === 429;
+                if (!retryable || attempt >= maxRetries) throw err;
+                const waitSeconds = err.retryAfter || 2 ** attempt;   // 1s, 2s, 4s
+                console.log(`   ↻ ${err.message} — retrying in ${waitSeconds}s`);
+                await new Promise(resolve => setTimeout(resolve, waitSeconds * 1000));
+            }
+        }
+    }
+
+    async function callOnce(method, params) {
         // getUpdates long-polls for up to `timeout` seconds; give it headroom
         const timeoutMs = method === 'getUpdates' ? ((params.timeout || 0) + 15) * 1000 : 15000;
 
@@ -24,13 +42,24 @@ function createTelegram(token) {
             });
         } catch (err) {
             const reason = (err.cause && err.cause.message) || err.message;
-            throw new Error(`Telegram ${method}: network error (${scrub(reason)})`);
+            const networkErr = new Error(`Telegram ${method}: network error (${scrub(reason)})`);
+            networkErr.network = true;
+            throw networkErr;
         }
 
-        const data = await response.json().catch(() => ({}));
+        let data;
+        try {
+            data = await response.json();
+        } catch (err) {
+            // Connection dropped mid-response, or a proxy returned non-JSON
+            const networkErr = new Error(`Telegram ${method}: bad response (HTTP ${response.status})`);
+            networkErr.network = true;
+            throw networkErr;
+        }
         if (!data.ok) {
             const err = new Error(`Telegram ${method}: ${scrub(data.description || `HTTP ${response.status}`)}`);
             err.code = data.error_code;
+            err.retryAfter = data.parameters && data.parameters.retry_after;
             throw err;
         }
         return data.result;

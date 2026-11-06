@@ -199,7 +199,21 @@ async function answerPills(pillNames, response) {
 // MAIN TICK — runs every 20s.
 // Handles initial reminders AND nags in one place.
 // ------------------------------------------------------------
+// With network retries a tick can take longer than 20s; never run two at once
+let tickRunning = false;
 async function tick() {
+    if (tickRunning) return;
+    tickRunning = true;
+    try {
+        await runTick();
+    } catch (err) {
+        console.error('❌ Error during reminder check:', err.message);
+    } finally {
+        tickRunning = false;
+    }
+}
+
+async function runTick() {
     const now = new Date();
     const windowMinutes = config.missedReminderWindowMinutes ?? DEFAULT_MISSED_WINDOW_MINUTES;
 
@@ -477,13 +491,22 @@ async function pollForever() {
 async function main() {
     console.log('🚀 Starting the pill reminder bot...');
 
+    // Keep trying while the internet is down (e.g. right after the computer
+    // wakes up); only give up if Telegram rejects the token.
     let me;
-    try {
-        me = await tg.call('getMe');
-    } catch (err) {
-        console.error(`❌ Could not connect to Telegram: ${err.message}`);
-        console.error('   Check TELEGRAM_BOT_TOKEN in .env and your internet connection.');
-        process.exit(1);
+    for (;;) {
+        try {
+            me = await tg.call('getMe');
+            break;
+        } catch (err) {
+            if (!err.network && err.code !== 429) {
+                console.error(`❌ Telegram rejected the bot: ${err.message}`);
+                console.error('   Check TELEGRAM_BOT_TOKEN in .env (the full "number:letters" token from @BotFather).');
+                process.exit(1);
+            }
+            console.error(`⚠️  Can't reach Telegram yet (${err.message}) — retrying in 15s`);
+            await new Promise(resolve => setTimeout(resolve, 15000));
+        }
     }
     console.log(`✅ Connected to Telegram as @${me.username}`);
     console.log('   Press Ctrl+C to stop the bot.');
