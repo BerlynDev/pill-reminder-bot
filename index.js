@@ -95,12 +95,40 @@ function pendingNames() {
         .map(([name]) => name);
 }
 
-// Which pending pill a reminder/nag message belongs to (null if none)
-function pillForMessageId(messageId) {
+// Which pending pill a quoted reminder/nag belongs to (null if none).
+// Matches by message ID first; falls back to the pill name in the text
+// ("…take your *Aspirin*…"), because WhatsApp doesn't always give the bot
+// the ID of a message it just sent.
+function pillForQuotedMessage(quoted) {
     for (const [name, info] of pendingReminders) {
-        if (info.messageIds.includes(messageId)) return name;
+        if (quoted.id && info.messageIds.includes(quoted.id)) return name;
     }
+    const match = /take your \*([^*]+)\*/.exec(quoted.body || '');
+    return match && pendingReminders.has(match[1]) ? match[1] : null;
+}
+
+// The message a reply quotes, as { id, body }, or null.
+// msg.getQuotedMessage() throws on some WhatsApp Web versions, so fall
+// back to the quoted message data that arrives with the reply itself.
+async function readQuotedMessage(msg) {
+    if (!msg.hasQuotedMsg) return null;
+    try {
+        const quoted = await msg.getQuotedMessage();
+        if (quoted) return { id: quoted.id.id, body: quoted.body || '' };
+    } catch (err) {
+        // fall through to the raw data below
+    }
+    const data = msg._data || {};
+    if (data.quotedMsg) {
+        return { id: data.quotedStanzaID || null, body: data.quotedMsg.body || data.quotedMsg.caption || '' };
+    }
+    console.error('⚠️  Could not read the quoted message');
     return null;
+}
+
+// ID of a message we sent, or null if WhatsApp didn't return it
+function sentMessageId(sent) {
+    return sent && sent.id ? sent.id.id : null;
 }
 
 function numberedList(names) {
@@ -115,6 +143,66 @@ function replyInstructions(pillName) {
         ? `Other pills are waiting too, so reply to *this message* with *YES* or *NO*, ` +
           `or write *YES ${pillName}* / *NO ${pillName}*.`
         : `Reply *YES* when you've taken it, or *NO* to skip.`;
+}
+
+// ------------------------------------------------------------
+// WHO COUNTS AS "YOU" — only YES/NO from you, in the bot↔you chat
+// ------------------------------------------------------------
+// Two setups are supported, picked automatically on startup:
+//   • Same number  — the bot runs on your own WhatsApp and writes to your
+//                    "Message yourself" chat. Replies are messages YOU send there.
+//   • Bot number   — the bot runs on a second WhatsApp account and writes to
+//                    MY_WHATSAPP_NUMBER. Replies are messages FROM that number.
+let sameNumberMode = true;
+
+// IDs WhatsApp uses for your chat with the bot. Seeded on startup with
+// MY_WHATSAPP_NUMBER; every message the bot sends you also adds the chat ID
+// WhatsApp actually used. Newer accounts can show up as a hidden "@lid" ID
+// instead of number@c.us; those are resolved back to the phone number.
+const userChatIds = new Set();
+
+// Send a message to you. Returns the sent Message, or undefined: some
+// WhatsApp Web versions deliver the message but don't hand it back, so
+// callers must not rely on the return value.
+async function sendToUser(client, myNumber, text) {
+    const sent = await client.sendMessage(myNumber, text);
+    if (sent && sent.to) userChatIds.add(sent.to);
+    if (!sent && !warnedNoMessageId) {
+        warnedNoMessageId = true;
+        console.log('ℹ️  WhatsApp is not returning sent-message IDs; matching quoted replies by pill name instead');
+    }
+    return sent;
+}
+let warnedNoMessageId = false;
+
+async function isUserChat(client, chatId) {
+    if (userChatIds.has(chatId)) return true;
+    if (!chatId || !chatId.endsWith('@lid')) return false;
+    try {
+        const [ids] = await client.getContactLidAndPhone([chatId]);
+        if (ids && ids.pn && userChatIds.has(ids.pn)) {
+            userChatIds.add(chatId);  // remember, so we only look it up once
+            return true;
+        }
+    } catch (err) {
+        console.error('⚠️  Could not resolve @lid chat ID:', err.message);
+    }
+    return false;
+}
+
+// Is this message a reply written by you, in your chat with the bot?
+async function isFromUser(client, msg) {
+    if (sameNumberMode) {
+        // You write in your own self-chat; msg.to is the chat it was sent to
+        return msg.fromMe && isUserChat(client, msg.to);
+    }
+    // Messages the bot account sends itself are never replies
+    return !msg.fromMe && isUserChat(client, msg.from);
+}
+
+// "593000001234@c.us" → "…1234@c.us" — never print full phone numbers
+function maskId(id) {
+    return String(id).replace(/^\d+(?=\d{4}@)/, '…');
 }
 
 // ------------------------------------------------------------
@@ -143,19 +231,24 @@ async function tick(client, myNumber, config) {
             (pill.notes ? `📝 _${pill.notes}_\n\n` : `\n`) +
             replyInstructions(pill.name);
 
+        // Mark as fired BEFORE sending, so a slow send can't let the next
+        // tick fire it again. Undone below if the send fails, to retry.
+        lastFiredAt.set(pill.name, now);
+
         try {
-            const sent = await client.sendMessage(myNumber, reminderText);
+            const sent = await sendToUser(client, myNumber, reminderText);
             const sentAt = new Date();
+            const messageId = sentMessageId(sent);
             console.log(`⏰ [${sentAt.toLocaleTimeString()}] Sent reminder for ${pill.name}`);
             pendingReminders.set(pill.name, {
                 firstSentAt: sentAt,
                 lastSentAt: sentAt,
                 remindersSent: 1,
-                messageIds: [sent.id.id]
+                messageIds: messageId ? [messageId] : []
             });
-            lastFiredAt.set(pill.name, sentAt);
             persist();
         } catch (err) {
+            lastFiredAt.delete(pill.name);
             console.error(`❌ Failed to send reminder for ${pill.name}:`, err.message);
         }
     }
@@ -172,11 +265,12 @@ async function tick(client, myNumber, config) {
             replyInstructions(pillName);
 
         try {
-            const sent = await client.sendMessage(myNumber, nagText);
+            const sent = await sendToUser(client, myNumber, nagText);
             console.log(`🔁 Nag #${info.remindersSent + 1} sent for ${pillName} (${minsAgo.toFixed(1)} min since last)`);
             info.lastSentAt = new Date();
             info.remindersSent += 1;
-            info.messageIds.push(sent.id.id);
+            const messageId = sentMessageId(sent);
+            if (messageId) info.messageIds.push(messageId);
             persist();
         } catch (err) {
             console.error(`❌ Failed to send nag for ${pillName}:`, err.message);
@@ -216,6 +310,13 @@ client.on('ready', async () => {
         return;
     }
 
+    userChatIds.add(myNumber);
+    const botUser = client.info && client.info.wid && client.info.wid.user;
+    sameNumberMode = !botUser || botUser === myNumber.split('@')[0];
+    console.log(sameNumberMode
+        ? `📲 Same-number mode: reminders go to your "Message yourself" chat`
+        : `📲 Bot-number mode: bot account ${maskId(client.info.wid._serialized)} → reminders go to ${maskId(myNumber)}`);
+
     // Startup message listing loaded pills (and anything still unanswered)
     const pillList = config.pills
         .map(p => `  • ${p.time} — ${p.name} (${p.dosage})`)
@@ -230,7 +331,7 @@ client.on('ready', async () => {
     }
 
     try {
-        await client.sendMessage(myNumber, message);
+        await sendToUser(client, myNumber, message);
         console.log('📤 Sent startup message');
     } catch (err) {
         console.error('❌ Failed to send startup message:', err.message);
@@ -258,11 +359,16 @@ client.on('ready', async () => {
 //   YES ALL                  → every waiting pill
 // ------------------------------------------------------------
 client.on('message_create', async (msg) => {
-    // Only react to messages YOU send (your own replies in self-chat)
-    if (!msg.fromMe) return;
-
     const parsed = parseReply(msg.body);
     if (!parsed) return;  // not a YES/NO — ignore
+
+    // A "yes" in any other chat (a friend, a group, a stranger writing to
+    // the bot number) is not a pill reply.
+    if (!(await isFromUser(client, msg))) {
+        const chat = msg.fromMe ? msg.to : msg.from;
+        console.log(`↪️  Ignored a YES/NO in another chat (${maskId(chat)})`);
+        return;
+    }
 
     const names = pendingNames();
 
@@ -270,7 +376,7 @@ client.on('message_create', async (msg) => {
     if (parsed.target && names.length === 0) return;
 
     const myNumber = process.env.MY_WHATSAPP_NUMBER;
-    const send = (text) => client.sendMessage(myNumber, text)
+    const send = (text) => sendToUser(client, myNumber, text)
         .catch(err => console.error('❌ Failed to send reply:', err.message));
 
     console.log(`💬 Got reply "${msg.body}" → ${parsed.response.toUpperCase()}` +
@@ -279,15 +385,14 @@ client.on('message_create', async (msg) => {
     // If you swiped-to-reply on a reminder, use the pill it was for.
     // Quoting any other message is ignored.
     let quote = null;
-    if (msg.hasQuotedMsg) {
-        try {
-            const quoted = await msg.getQuotedMessage();
-            const pillName = pillForMessageId(quoted.id.id);
-            const isReminder = /^(💊 \*Pill Reminder\*|🔁 \*Still waiting on you!\*)/.test(quoted.body);
-            if (pillName || isReminder) quote = { pillName };
-        } catch (err) {
-            console.error('⚠️  Could not read quoted message:', err.message);
-        }
+    const quoted = await readQuotedMessage(msg);
+    if (quoted) {
+        const pillName = pillForQuotedMessage(quoted);
+        const isReminder = /^(💊 \*Pill Reminder\*|🔁 \*Still waiting on you!\*)/.test(quoted.body);
+        if (pillName || isReminder) quote = { pillName };
+        console.log(pillName
+            ? `   ↩️  Reply to the reminder for ${pillName}`
+            : `   ↩️  Reply to a message that isn't a waiting reminder`);
     }
 
     const result = resolveTargets(parsed.target, names, quote);
