@@ -95,12 +95,21 @@ function pendingNames() {
         .map(([name]) => name);
 }
 
-// Which pending pill a reminder/nag message belongs to (null if none)
-function pillForMessageId(messageId) {
+// Which pending pill a quoted reminder/nag belongs to (null if none).
+// Matches by message ID first; falls back to the pill name in the text
+// ("…take your *Aspirin*…"), because WhatsApp doesn't always give the bot
+// the ID of a message it just sent.
+function pillForQuotedMessage(quoted) {
     for (const [name, info] of pendingReminders) {
-        if (info.messageIds.includes(messageId)) return name;
+        if (info.messageIds.includes(quoted.id.id)) return name;
     }
-    return null;
+    const match = /take your \*([^*]+)\*/.exec(quoted.body || '');
+    return match && pendingReminders.has(match[1]) ? match[1] : null;
+}
+
+// ID of a message we sent, or null if WhatsApp didn't return it
+function sentMessageId(sent) {
+    return sent && sent.id ? sent.id.id : null;
 }
 
 function numberedList(names) {
@@ -133,11 +142,19 @@ let sameNumberMode = true;
 // instead of number@c.us; those are resolved back to the phone number.
 const userChatIds = new Set();
 
+// Send a message to you. Returns the sent Message, or undefined: some
+// WhatsApp Web versions deliver the message but don't hand it back, so
+// callers must not rely on the return value.
 async function sendToUser(client, myNumber, text) {
     const sent = await client.sendMessage(myNumber, text);
     if (sent && sent.to) userChatIds.add(sent.to);
+    if (!sent && !warnedNoMessageId) {
+        warnedNoMessageId = true;
+        console.log('ℹ️  WhatsApp is not returning sent-message IDs; matching quoted replies by pill name instead');
+    }
     return sent;
 }
+let warnedNoMessageId = false;
 
 async function isUserChat(client, chatId) {
     if (userChatIds.has(chatId)) return true;
@@ -195,19 +212,24 @@ async function tick(client, myNumber, config) {
             (pill.notes ? `📝 _${pill.notes}_\n\n` : `\n`) +
             replyInstructions(pill.name);
 
+        // Mark as fired BEFORE sending, so a slow send can't let the next
+        // tick fire it again. Undone below if the send fails, to retry.
+        lastFiredAt.set(pill.name, now);
+
         try {
             const sent = await sendToUser(client, myNumber, reminderText);
             const sentAt = new Date();
+            const messageId = sentMessageId(sent);
             console.log(`⏰ [${sentAt.toLocaleTimeString()}] Sent reminder for ${pill.name}`);
             pendingReminders.set(pill.name, {
                 firstSentAt: sentAt,
                 lastSentAt: sentAt,
                 remindersSent: 1,
-                messageIds: [sent.id.id]
+                messageIds: messageId ? [messageId] : []
             });
-            lastFiredAt.set(pill.name, sentAt);
             persist();
         } catch (err) {
+            lastFiredAt.delete(pill.name);
             console.error(`❌ Failed to send reminder for ${pill.name}:`, err.message);
         }
     }
@@ -228,7 +250,8 @@ async function tick(client, myNumber, config) {
             console.log(`🔁 Nag #${info.remindersSent + 1} sent for ${pillName} (${minsAgo.toFixed(1)} min since last)`);
             info.lastSentAt = new Date();
             info.remindersSent += 1;
-            info.messageIds.push(sent.id.id);
+            const messageId = sentMessageId(sent);
+            if (messageId) info.messageIds.push(messageId);
             persist();
         } catch (err) {
             console.error(`❌ Failed to send nag for ${pillName}:`, err.message);
@@ -346,7 +369,7 @@ client.on('message_create', async (msg) => {
     if (msg.hasQuotedMsg) {
         try {
             const quoted = await msg.getQuotedMessage();
-            const pillName = pillForMessageId(quoted.id.id);
+            const pillName = pillForQuotedMessage(quoted);
             const isReminder = /^(💊 \*Pill Reminder\*|🔁 \*Still waiting on you!\*)/.test(quoted.body);
             if (pillName || isReminder) quote = { pillName };
         } catch (err) {
