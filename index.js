@@ -10,6 +10,7 @@ const { Client, LocalAuth } = require('whatsapp-web.js');
 const qrcode = require('qrcode-terminal');
 const { loadState, saveState } = require('./state');
 const { parseReply, resolveTargets } = require('./replies');
+const { reminderAction, DEFAULT_MISSED_WINDOW_MINUTES } = require('./schedule');
 
 // NOTE: every message the bot sends must NOT start with a YES/NO word or
 // emoji (see replies.js), otherwise the bot would read its own messages
@@ -28,6 +29,11 @@ function loadPills() {
     try {
         const fileContents = fs.readFileSync('./pills.json', 'utf8');
         const config = JSON.parse(fileContents);
+        for (const pill of config.pills) {
+            if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(pill.time)) {
+                throw new Error(`"${pill.name}" has time "${pill.time}" — use 24-hour HH:MM, e.g. "08:00" or "21:30"`);
+            }
+        }
         console.log(`💊 Loaded ${config.pills.length} pill(s) from pills.json`);
         return config;
     } catch (err) {
@@ -211,35 +217,59 @@ function maskId(id) {
 // ------------------------------------------------------------
 async function tick(client, myNumber, config) {
     const now = new Date();
+    const windowMinutes = config.missedReminderWindowMinutes ?? DEFAULT_MISSED_WINDOW_MINUTES;
 
-    // "HH:MM" for the current moment (e.g. "15:38")
-    const hh = String(now.getHours()).padStart(2, '0');
-    const mm = String(now.getMinutes()).padStart(2, '0');
-    const currentTime = `${hh}:${mm}`;
-
-    // ---- 1. Fire initial reminders for any pill matching the current minute ----
+    // ---- 1. Send reminders that are due (or were missed while offline) ----
     for (const pill of config.pills) {
-        if (pill.time !== currentTime) continue;
+        const previous = lastFiredAt.get(pill.name);
+        const { action, dueAt } = reminderAction(pill, now, previous, windowMinutes);
+        if (action === 'none') continue;
 
-        // Don't double-fire within the same minute
-        const last = lastFiredAt.get(pill.name);
-        if (last && (now - last) < 2 * 60 * 1000) continue;
+        if (action === 'start_next') {
+            // New pill (or first run) and today's time already passed:
+            // don't surprise you with an old reminder, start next time.
+            lastFiredAt.set(pill.name, now);
+            persist();
+            console.log(`📅 "${pill.name}" was due at ${pill.time}, before the bot knew about it — first reminder next time`);
+            continue;
+        }
 
-        const reminderText =
-            `💊 *Pill Reminder*\n\n` +
-            `It's ${pill.time} — time to take your *${pill.name}* (${pill.dosage}).\n` +
-            (pill.notes ? `📝 _${pill.notes}_\n\n` : `\n`) +
-            replyInstructions(pill.name);
+        let text;
+        if (action === 'missed') {
+            text =
+                `⚠️ *Missed reminder*\n\n` +
+                `I was offline at ${pill.time}, when your *${pill.name}* (${pill.dosage}) was due, ` +
+                `and that was more than ${windowMinutes} min ago, so I won't ask about this dose.`;
+        } else {
+            const late = action === 'send_late';
+            text =
+                `💊 *Pill Reminder*${late ? ' (late)' : ''}\n\n` +
+                (late
+                    ? `This was due at ${pill.time} — time to take your *${pill.name}* (${pill.dosage}).\n` +
+                      `_I was offline or asleep at ${pill.time}, so this reminder is late._\n`
+                    : `It's ${pill.time} — time to take your *${pill.name}* (${pill.dosage}).\n`) +
+                (pill.notes ? `📝 _${pill.notes}_\n\n` : `\n`) +
+                replyInstructions(pill.name);
+        }
 
-        // Mark as fired BEFORE sending, so a slow send can't let the next
-        // tick fire it again. Undone below if the send fails, to retry.
+        // Mark as handled BEFORE sending, so a slow send can't let the next
+        // tick send it again. Undone below if the send fails, to retry.
         lastFiredAt.set(pill.name, now);
 
         try {
-            const sent = await sendToUser(client, myNumber, reminderText);
+            const sent = await sendToUser(client, myNumber, text);
             const sentAt = new Date();
+            const lateBy = Math.round((sentAt - dueAt) / 60000);
+
+            if (action === 'missed') {
+                console.log(`⚠️  Missed ${pill.name} (due ${pill.time}, ${lateBy} min ago) — told you, not asking`);
+                persist();
+                continue;
+            }
+
             const messageId = sentMessageId(sent);
-            console.log(`⏰ [${sentAt.toLocaleTimeString()}] Sent reminder for ${pill.name}`);
+            console.log(`⏰ [${sentAt.toLocaleTimeString()}] Sent reminder for ${pill.name}` +
+                (action === 'send_late' ? ` (late by ${lateBy} min)` : ''));
             pendingReminders.set(pill.name, {
                 firstSentAt: sentAt,
                 lastSentAt: sentAt,
@@ -248,7 +278,8 @@ async function tick(client, myNumber, config) {
             });
             persist();
         } catch (err) {
-            lastFiredAt.delete(pill.name);
+            if (previous) lastFiredAt.set(pill.name, previous);
+            else lastFiredAt.delete(pill.name);
             console.error(`❌ Failed to send reminder for ${pill.name}:`, err.message);
         }
     }
@@ -345,6 +376,8 @@ client.on('ready', async () => {
 
     // Start the unified tick loop — handles initial reminders AND nags.
     // Runs every 20 seconds; the function decides when to actually send.
+    // First tick right away, so reminders missed while offline go out now.
+    tick(client, myNumber, config);
     setInterval(() => tick(client, myNumber, config), 20 * 1000);
 });
 

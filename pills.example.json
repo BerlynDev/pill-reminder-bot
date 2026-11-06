@@ -13,5 +13,6 @@
       "notes": ""
     }
   ],
-  "reminderIntervalMinutes": 10
+  "reminderIntervalMinutes": 10,
+  "missedReminderWindowMinutes": 180
 }
