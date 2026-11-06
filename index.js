@@ -5,6 +5,20 @@
 // Load environment variables from .env into process.env
 require('dotenv').config({ quiet: true });
 
+// Pill times in pills.json are in this timezone. Servers usually run on
+// UTC, so without it an 08:00 pill would fire at 08:00 UTC (03:00 in
+// Ecuador). Must be set before any date is handled.
+const TIMEZONE = (process.env.TIMEZONE || '').trim();
+if (TIMEZONE) {
+    try {
+        new Intl.DateTimeFormat('en', { timeZone: TIMEZONE });   // throws if unknown
+    } catch (err) {
+        console.error(`❌ TIMEZONE "${TIMEZONE}" isn't a valid timezone — use e.g. America/Guayaquil`);
+        process.exit(1);
+    }
+    process.env.TZ = TIMEZONE;
+}
+
 const fs = require('fs');                              // built-in: read/write files
 const { createTelegram } = require('./telegram');
 const { loadState, saveState } = require('./state');
@@ -585,6 +599,9 @@ async function main() {
         }
     }
     console.log(`✅ Connected to Telegram as @${me.username}`);
+    const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    console.log(`🕒 Timezone: ${zone}${TIMEZONE ? '' : ' (system default — set TIMEZONE in .env on a server)'}` +
+        ` — local time now ${new Date().toTimeString().slice(0, 5)}`);
     console.log('   Press Ctrl+C to stop the bot.');
 
     // The "/" menu: default language for everyone, then each person's own
