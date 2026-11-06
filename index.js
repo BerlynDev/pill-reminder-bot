@@ -118,6 +118,21 @@ function replyInstructions(pillName) {
 }
 
 // ------------------------------------------------------------
+// SELF-CHAT — only YES/NO typed in your own chat count as replies
+// ------------------------------------------------------------
+// Chat IDs WhatsApp uses for your "Message yourself" chat. Seeded on
+// startup with your number and account ID; every message the bot sends
+// also adds the chat ID WhatsApp actually used (newer accounts can use an
+// @lid ID instead of number@c.us).
+const selfChatIds = new Set();
+
+async function sendToSelf(client, myNumber, text) {
+    const sent = await client.sendMessage(myNumber, text);
+    if (sent && sent.to) selfChatIds.add(sent.to);
+    return sent;
+}
+
+// ------------------------------------------------------------
 // MAIN TICK — runs every 20s via setInterval.
 // Handles initial reminders AND nags in one place.
 // ------------------------------------------------------------
@@ -144,7 +159,7 @@ async function tick(client, myNumber, config) {
             replyInstructions(pill.name);
 
         try {
-            const sent = await client.sendMessage(myNumber, reminderText);
+            const sent = await sendToSelf(client, myNumber, reminderText);
             const sentAt = new Date();
             console.log(`⏰ [${sentAt.toLocaleTimeString()}] Sent reminder for ${pill.name}`);
             pendingReminders.set(pill.name, {
@@ -172,7 +187,7 @@ async function tick(client, myNumber, config) {
             replyInstructions(pillName);
 
         try {
-            const sent = await client.sendMessage(myNumber, nagText);
+            const sent = await sendToSelf(client, myNumber, nagText);
             console.log(`🔁 Nag #${info.remindersSent + 1} sent for ${pillName} (${minsAgo.toFixed(1)} min since last)`);
             info.lastSentAt = new Date();
             info.remindersSent += 1;
@@ -216,6 +231,9 @@ client.on('ready', async () => {
         return;
     }
 
+    selfChatIds.add(myNumber);
+    if (client.info && client.info.wid) selfChatIds.add(client.info.wid._serialized);
+
     // Startup message listing loaded pills (and anything still unanswered)
     const pillList = config.pills
         .map(p => `  • ${p.time} — ${p.name} (${p.dosage})`)
@@ -230,7 +248,7 @@ client.on('ready', async () => {
     }
 
     try {
-        await client.sendMessage(myNumber, message);
+        await sendToSelf(client, myNumber, message);
         console.log('📤 Sent startup message');
     } catch (err) {
         console.error('❌ Failed to send startup message:', err.message);
@@ -264,13 +282,20 @@ client.on('message_create', async (msg) => {
     const parsed = parseReply(msg.body);
     if (!parsed) return;  // not a YES/NO — ignore
 
+    // A "yes" you sent to a friend or a group is not a pill reply.
+    // (For messages you send, msg.to is the chat they were sent to.)
+    if (!selfChatIds.has(msg.to)) {
+        console.log(`↪️  Ignored a YES/NO sent to another chat (${msg.to})`);
+        return;
+    }
+
     const names = pendingNames();
 
     // "y mañana compro leche" with nothing pending is just a note, not a reply
     if (parsed.target && names.length === 0) return;
 
     const myNumber = process.env.MY_WHATSAPP_NUMBER;
-    const send = (text) => client.sendMessage(myNumber, text)
+    const send = (text) => sendToSelf(client, myNumber, text)
         .catch(err => console.error('❌ Failed to send reply:', err.message));
 
     console.log(`💬 Got reply "${msg.body}" → ${parsed.response.toUpperCase()}` +
