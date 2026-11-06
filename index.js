@@ -1,26 +1,32 @@
 // ============================================================
-// PILL REMINDER BOT
+// PILL REMINDER BOT (Telegram)
 // ============================================================
 
 // Load environment variables from .env into process.env
-require('dotenv').config();
+require('dotenv').config({ quiet: true });
 
 const fs = require('fs');                              // built-in: read/write files
-const { Client, LocalAuth } = require('whatsapp-web.js');
-const qrcode = require('qrcode-terminal');
+const { createTelegram } = require('./telegram');
 const { loadState, saveState } = require('./state');
 const { parseReply, resolveTargets } = require('./replies');
 const { reminderAction, DEFAULT_MISSED_WINDOW_MINUTES } = require('./schedule');
 
-// NOTE: every message the bot sends must NOT start with a YES/NO word or
-// emoji (see replies.js), otherwise the bot would read its own messages
-// as replies.
-
 // ------------------------------------------------------------
-// CONSTANTS
+// CONSTANTS & SETTINGS
 // ------------------------------------------------------------
 const HISTORY_FILE = './history.json';
 const STATE_FILE = './state.json';
+const TICK_SECONDS = 20;
+
+const TOKEN = (process.env.TELEGRAM_BOT_TOKEN || '').trim();
+// The one chat the bot talks to (yours). Empty → setup mode (see /start).
+const CHAT_ID = (process.env.TELEGRAM_CHAT_ID || '').trim();
+
+if (!TOKEN) {
+    console.error('❌ TELEGRAM_BOT_TOKEN is not set in .env — create a bot with @BotFather to get one.');
+    process.exit(1);
+}
+const tg = createTelegram(TOKEN);
 
 // ------------------------------------------------------------
 // LOAD PILL CONFIG
@@ -29,10 +35,17 @@ function loadPills() {
     try {
         const fileContents = fs.readFileSync('./pills.json', 'utf8');
         const config = JSON.parse(fileContents);
+        const names = new Set();
         for (const pill of config.pills) {
             if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(pill.time)) {
                 throw new Error(`"${pill.name}" has time "${pill.time}" — use 24-hour HH:MM, e.g. "08:00" or "21:30"`);
             }
+            // The name travels inside button data, which Telegram caps at 64 bytes
+            if (Buffer.byteLength(pill.name, 'utf8') > 60) {
+                throw new Error(`"${pill.name}" is too long — keep pill names under ~60 characters`);
+            }
+            if (names.has(pill.name)) throw new Error(`"${pill.name}" appears twice — pill names must be unique`);
+            names.add(pill.name);
         }
         console.log(`💊 Loaded ${config.pills.length} pill(s) from pills.json`);
         return config;
@@ -66,10 +79,10 @@ function logResponse(entry) {
 // ------------------------------------------------------------
 const config = loadPills();
 
-// Pills currently waiting for a YES/NO reply.
+// Pills currently waiting for an answer.
 // Map<pillName, { firstSentAt: Date, lastSentAt: Date,
-//                 remindersSent: number, messageIds: string[] }>
-// When each pill was last fired — prevents double-firing within same minute.
+//                 remindersSent: number, messageIds: number[] }>
+// When each pill was last reminded/handled (see schedule.js).
 // Map<pillName, Date>
 const { pending: pendingReminders, lastFiredAt } = loadState(STATE_FILE);
 
@@ -94,6 +107,15 @@ if (pendingReminders.size > 0) {
     console.log(`⏳ Restored ${pendingReminders.size} pending reminder(s) from ${STATE_FILE}`);
 }
 
+// ------------------------------------------------------------
+// HELPERS
+// ------------------------------------------------------------
+
+// Messages use Telegram's HTML formatting, so escape anything from pills.json
+function esc(text) {
+    return String(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
 // Pending pill names, oldest reminder first (used for numbered lists)
 function pendingNames() {
     return [...pendingReminders]
@@ -101,121 +123,83 @@ function pendingNames() {
         .map(([name]) => name);
 }
 
-// Which pending pill a quoted reminder/nag belongs to (null if none).
-// Matches by message ID first; falls back to the pill name in the text
-// ("…take your *Aspirin*…"), because WhatsApp doesn't always give the bot
-// the ID of a message it just sent.
-function pillForQuotedMessage(quoted) {
-    for (const [name, info] of pendingReminders) {
-        if (quoted.id && info.messageIds.includes(quoted.id)) return name;
-    }
-    const match = /take your \*([^*]+)\*/.exec(quoted.body || '');
-    return match && pendingReminders.has(match[1]) ? match[1] : null;
+function numberedList(names) {
+    return names.map((name, i) => `${i + 1}. ${esc(name)}`).join('\n');
 }
 
-// The message a reply quotes, as { id, body }, or null.
-// msg.getQuotedMessage() throws on some WhatsApp Web versions, so fall
-// back to the quoted message data that arrives with the reply itself.
-async function readQuotedMessage(msg) {
-    if (!msg.hasQuotedMsg) return null;
-    try {
-        const quoted = await msg.getQuotedMessage();
-        if (quoted) return { id: quoted.id.id, body: quoted.body || '' };
-    } catch (err) {
-        // fall through to the raw data below
+// Which pending pill a reminder message belongs to (null if none)
+function pillForMessageId(messageId) {
+    for (const [name, info] of pendingReminders) {
+        if (info.messageIds.includes(messageId)) return name;
     }
-    const data = msg._data || {};
-    if (data.quotedMsg) {
-        return { id: data.quotedStanzaID || null, body: data.quotedMsg.body || data.quotedMsg.caption || '' };
-    }
-    console.error('⚠️  Could not read the quoted message');
     return null;
 }
 
-// ID of a message we sent, or null if WhatsApp didn't return it
-function sentMessageId(sent) {
-    return sent && sent.id ? sent.id.id : null;
+// Button data is "y:<pill name>" (taken) or "n:<pill name>" (skipped)
+function answerButtons(pillName) {
+    return [[
+        { text: '✅ Taken', callback_data: `y:${pillName}` },
+        { text: '⏭️ Skip', callback_data: `n:${pillName}` }
+    ]];
 }
 
-function numberedList(names) {
-    return names.map((name, i) => `${i + 1}. ${name}`).join('\n');
+// Send a message to you. Returns the sent message (with message_id).
+function send(text, buttons) {
+    return tg.call('sendMessage', {
+        chat_id: CHAT_ID,
+        text: text.trimEnd(),
+        parse_mode: 'HTML',
+        ...(buttons ? { reply_markup: { inline_keyboard: buttons } } : {})
+    });
 }
 
-// How to answer a reminder — explains how to pick a pill when
-// more than one is waiting.
-function replyInstructions(pillName) {
-    const othersWaiting = [...pendingReminders.keys()].some(n => n !== pillName);
-    return othersWaiting
-        ? `Other pills are waiting too, so reply to *this message* with *YES* or *NO*, ` +
-          `or write *YES ${pillName}* / *NO ${pillName}*.`
-        : `Reply *YES* when you've taken it, or *NO* to skip.`;
-}
-
-// ------------------------------------------------------------
-// WHO COUNTS AS "YOU" — only YES/NO from you, in the bot↔you chat
-// ------------------------------------------------------------
-// Two setups are supported, picked automatically on startup:
-//   • Same number  — the bot runs on your own WhatsApp and writes to your
-//                    "Message yourself" chat. Replies are messages YOU send there.
-//   • Bot number   — the bot runs on a second WhatsApp account and writes to
-//                    MY_WHATSAPP_NUMBER. Replies are messages FROM that number.
-let sameNumberMode = true;
-
-// IDs WhatsApp uses for your chat with the bot. Seeded on startup with
-// MY_WHATSAPP_NUMBER; every message the bot sends you also adds the chat ID
-// WhatsApp actually used. Newer accounts can show up as a hidden "@lid" ID
-// instead of number@c.us; those are resolved back to the phone number.
-const userChatIds = new Set();
-
-// Send a message to you. Returns the sent Message, or undefined: some
-// WhatsApp Web versions deliver the message but don't hand it back, so
-// callers must not rely on the return value.
-async function sendToUser(client, myNumber, text) {
-    const sent = await client.sendMessage(myNumber, text);
-    if (sent && sent.to) userChatIds.add(sent.to);
-    if (!sent && !warnedNoMessageId) {
-        warnedNoMessageId = true;
-        console.log('ℹ️  WhatsApp is not returning sent-message IDs; matching quoted replies by pill name instead');
-    }
-    return sent;
-}
-let warnedNoMessageId = false;
-
-async function isUserChat(client, chatId) {
-    if (userChatIds.has(chatId)) return true;
-    if (!chatId || !chatId.endsWith('@lid')) return false;
-    try {
-        const [ids] = await client.getContactLidAndPhone([chatId]);
-        if (ids && ids.pn && userChatIds.has(ids.pn)) {
-            userChatIds.add(chatId);  // remember, so we only look it up once
-            return true;
-        }
-    } catch (err) {
-        console.error('⚠️  Could not resolve @lid chat ID:', err.message);
-    }
-    return false;
-}
-
-// Is this message a reply written by you, in your chat with the bot?
-async function isFromUser(client, msg) {
-    if (sameNumberMode) {
-        // You write in your own self-chat; msg.to is the chat it was sent to
-        return msg.fromMe && isUserChat(client, msg.to);
-    }
-    // Messages the bot account sends itself are never replies
-    return !msg.fromMe && isUserChat(client, msg.from);
-}
-
-// "593000001234@c.us" → "…1234@c.us" — never print full phone numbers
-function maskId(id) {
-    return String(id).replace(/^\d+(?=\d{4}@)/, '…');
+// Remove the buttons from a message (best effort — it may be too old to edit)
+function removeButtons(messageId) {
+    return tg.call('editMessageReplyMarkup', {
+        chat_id: CHAT_ID,
+        message_id: messageId,
+        reply_markup: { inline_keyboard: [] }
+    }).catch(() => {});
 }
 
 // ------------------------------------------------------------
-// MAIN TICK — runs every 20s via setInterval.
+// ANSWERING — shared by buttons and typed YES/NO
+// ------------------------------------------------------------
+async function answerPills(pillNames, response) {
+    for (const pillName of pillNames) {
+        const info = pendingReminders.get(pillName);
+        if (!info) continue;
+        pendingReminders.delete(pillName);
+
+        logResponse({
+            timestamp: new Date().toISOString(),
+            pillName,
+            response,
+            remindersSent: info.remindersSent,
+            originalReminderAt: info.firstSentAt.toISOString()
+        });
+
+        // Old reminders for this dose shouldn't stay clickable
+        await Promise.all(info.messageIds.map(removeButtons));
+    }
+    persist();
+    console.log(`   ✅ Cleared ${pillNames.join(', ')} from pending (${pendingReminders.size} remaining)`);
+
+    const pillList = pillNames.map(n => `<b>${esc(n)}</b>`).join(', ');
+    let ack = response === 'yes'
+        ? `🎉 Great! Logged that you took your ${pillList}. Stay healthy! 💪`
+        : `⏭️ Noted — you skipped ${pillList}. I won't keep reminding you.`;
+    if (pendingReminders.size > 0) {
+        ack += `\n\nStill waiting on:\n${numberedList(pendingNames())}`;
+    }
+    await send(ack);
+}
+
+// ------------------------------------------------------------
+// MAIN TICK — runs every 20s.
 // Handles initial reminders AND nags in one place.
 // ------------------------------------------------------------
-async function tick(client, myNumber, config) {
+async function tick() {
     const now = new Date();
     const windowMinutes = config.missedReminderWindowMinutes ?? DEFAULT_MISSED_WINDOW_MINUTES;
 
@@ -235,21 +219,22 @@ async function tick(client, myNumber, config) {
         }
 
         let text;
+        let buttons = null;
         if (action === 'missed') {
             text =
-                `⚠️ *Missed reminder*\n\n` +
-                `I was offline at ${pill.time}, when your *${pill.name}* (${pill.dosage}) was due, ` +
+                `⚠️ <b>Missed reminder</b>\n\n` +
+                `I was offline at ${pill.time}, when your <b>${esc(pill.name)}</b> (${esc(pill.dosage)}) was due, ` +
                 `and that was more than ${windowMinutes} min ago, so I won't ask about this dose.`;
         } else {
             const late = action === 'send_late';
             text =
-                `💊 *Pill Reminder*${late ? ' (late)' : ''}\n\n` +
+                `💊 <b>Pill Reminder</b>${late ? ' (late)' : ''}\n\n` +
                 (late
-                    ? `This was due at ${pill.time} — time to take your *${pill.name}* (${pill.dosage}).\n` +
-                      `_I was offline or asleep at ${pill.time}, so this reminder is late._\n`
-                    : `It's ${pill.time} — time to take your *${pill.name}* (${pill.dosage}).\n`) +
-                (pill.notes ? `📝 _${pill.notes}_\n\n` : `\n`) +
-                replyInstructions(pill.name);
+                    ? `This was due at ${pill.time} — time to take your <b>${esc(pill.name)}</b> (${esc(pill.dosage)}).\n` +
+                      `<i>I was offline or asleep at ${pill.time}, so this reminder is late.</i>\n`
+                    : `It's ${pill.time} — time to take your <b>${esc(pill.name)}</b> (${esc(pill.dosage)}).\n`) +
+                (pill.notes ? `📝 <i>${esc(pill.notes)}</i>\n` : '');
+            buttons = answerButtons(pill.name);
         }
 
         // Mark as handled BEFORE sending, so a slow send can't let the next
@@ -257,7 +242,7 @@ async function tick(client, myNumber, config) {
         lastFiredAt.set(pill.name, now);
 
         try {
-            const sent = await sendToUser(client, myNumber, text);
+            const sent = await send(text, buttons);
             const sentAt = new Date();
             const lateBy = Math.round((sentAt - dueAt) / 60000);
 
@@ -267,14 +252,18 @@ async function tick(client, myNumber, config) {
                 continue;
             }
 
-            const messageId = sentMessageId(sent);
             console.log(`⏰ [${sentAt.toLocaleTimeString()}] Sent reminder for ${pill.name}` +
                 (action === 'send_late' ? ` (late by ${lateBy} min)` : ''));
+
+            // If yesterday's dose was never answered, retire its buttons
+            const stale = pendingReminders.get(pill.name);
+            if (stale) await Promise.all(stale.messageIds.map(removeButtons));
+
             pendingReminders.set(pill.name, {
                 firstSentAt: sentAt,
                 lastSentAt: sentAt,
                 remindersSent: 1,
-                messageIds: messageId ? [messageId] : []
+                messageIds: [sent.message_id]
             });
             persist();
         } catch (err) {
@@ -290,18 +279,16 @@ async function tick(client, myNumber, config) {
         if (minsAgo < config.reminderIntervalMinutes) continue;
 
         const nagText =
-            `🔁 *Still waiting on you!*\n\n` +
-            `Did you take your *${pillName}* yet?\n` +
-            `(This is reminder #${info.remindersSent + 1})\n\n` +
-            replyInstructions(pillName);
+            `🔁 <b>Still waiting on you!</b>\n\n` +
+            `Did you take your <b>${esc(pillName)}</b> yet?\n` +
+            `(This is reminder #${info.remindersSent + 1})`;
 
         try {
-            const sent = await sendToUser(client, myNumber, nagText);
+            const sent = await send(nagText, answerButtons(pillName));
             console.log(`🔁 Nag #${info.remindersSent + 1} sent for ${pillName} (${minsAgo.toFixed(1)} min since last)`);
             info.lastSentAt = new Date();
             info.remindersSent += 1;
-            const messageId = sentMessageId(sent);
-            if (messageId) info.messageIds.push(messageId);
+            info.messageIds.push(sent.message_id);
             persist();
         } catch (err) {
             console.error(`❌ Failed to send nag for ${pillName}:`, err.message);
@@ -310,118 +297,117 @@ async function tick(client, myNumber, config) {
 }
 
 // ------------------------------------------------------------
-// CREATE WHATSAPP CLIENT
+// BUTTON PRESSES (✅ Taken / ⏭️ Skip)
 // ------------------------------------------------------------
-const client = new Client({
-    authStrategy: new LocalAuth(),
-    puppeteer: {
-        args: ['--no-sandbox', '--disable-setuid-sandbox']
-    }
-});
+async function handleButton(query) {
+    const done = (text) => tg.call('answerCallbackQuery', {
+        callback_query_id: query.id,
+        ...(text ? { text } : {})
+    }).catch(() => {});
 
-// ------------------------------------------------------------
-// EVENT: QR code (first run only)
-// ------------------------------------------------------------
-client.on('qr', (qr) => {
-    console.log('📱 Scan this QR code with WhatsApp on your phone:');
-    qrcode.generate(qr, { small: true });
-});
-
-// ------------------------------------------------------------
-// EVENT: Ready — login complete, start the tick loop
-// ------------------------------------------------------------
-client.on('ready', async () => {
-    console.log('');
-    console.log('✅ WhatsApp is ready! The bot is now connected.');
-    console.log('   Press Ctrl+C to stop the bot.');
-
-    const myNumber = process.env.MY_WHATSAPP_NUMBER;
-    if (!myNumber) {
-        console.error('❌ MY_WHATSAPP_NUMBER is not set in .env');
+    if (!CHAT_ID || !query.message || String(query.message.chat.id) !== CHAT_ID) {
+        await done();
         return;
     }
 
-    userChatIds.add(myNumber);
-    const botUser = client.info && client.info.wid && client.info.wid.user;
-    sameNumberMode = !botUser || botUser === myNumber.split('@')[0];
-    console.log(sameNumberMode
-        ? `📲 Same-number mode: reminders go to your "Message yourself" chat`
-        : `📲 Bot-number mode: bot account ${maskId(client.info.wid._serialized)} → reminders go to ${maskId(myNumber)}`);
-
-    // Startup message listing loaded pills (and anything still unanswered)
-    const pillList = config.pills
-        .map(p => `  • ${p.time} — ${p.name} (${p.dosage})`)
-        .join('\n');
-    let message =
-        `👋 Pill reminder bot is online!\n\n` +
-        `Loaded ${config.pills.length} pill(s):\n${pillList}\n\n` +
-        `I'll remind you every ${config.reminderIntervalMinutes} min ` +
-        `until you reply YES.`;
-    if (pendingReminders.size > 0) {
-        message += `\n\n⏳ Still waiting on a reply for:\n${numberedList(pendingNames())}`;
+    const data = query.data || '';
+    const separator = data.indexOf(':');
+    const code = data.slice(0, Math.max(separator, 0));
+    const pillName = data.slice(separator + 1);
+    const response = code === 'y' ? 'yes' : code === 'n' ? 'no' : null;
+    if (!response) {
+        await done();
+        return;
     }
 
-    try {
-        await sendToUser(client, myNumber, message);
-        console.log('📤 Sent startup message');
-    } catch (err) {
-        console.error('❌ Failed to send startup message:', err.message);
+    console.log(`🔘 Button: ${response.toUpperCase()} for ${pillName}`);
+
+    if (!pendingReminders.has(pillName)) {
+        await done('This dose was already answered.');
+        await removeButtons(query.message.message_id);
+        return;
     }
 
-    // Log schedule
-    config.pills.forEach(p => {
-        console.log(`📅 Will remind for "${p.name}" daily at ${p.time}`);
-    });
-    console.log(`🔁 Tick loop running every 20s (nag interval: ${config.reminderIntervalMinutes} min)`);
-
-    // Start the unified tick loop — handles initial reminders AND nags.
-    // Runs every 20 seconds; the function decides when to actually send.
-    // First tick right away, so reminders missed while offline go out now.
-    tick(client, myNumber, config);
-    setInterval(() => tick(client, myNumber, config), 20 * 1000);
-});
+    await done(response === 'yes' ? `✅ ${pillName} logged` : `⏭️ ${pillName} skipped`);
+    await removeButtons(query.message.message_id);  // e.g. the "which one?" question
+    await answerPills([pillName], response);
+}
 
 // ------------------------------------------------------------
-// EVENT: incoming message — handle YES / NO replies
+// TEXT MESSAGES — commands and typed YES/NO
 //
-// Supported replies:
-//   YES / NO                 → the only waiting pill
-//   YES / NO quoting a reminder → the pill that reminder was for
-//   YES Aspirin / NO vit     → pill by (partial) name
-//   YES 2                    → pill #2 in the "which one?" list
-//   YES ALL                  → every waiting pill
+// Typed replies (buttons are easier, but these work too):
+//   YES / NO                    → the only waiting pill
+//   YES / NO replying to a reminder → the pill that reminder was for
+//   YES Aspirin / NO vit        → pill by (partial) name
+//   YES 2                       → pill #2 in the "which one?" list
+//   YES ALL                     → every waiting pill
 // ------------------------------------------------------------
-client.on('message_create', async (msg) => {
-    const parsed = parseReply(msg.body);
-    if (!parsed) return;  // not a YES/NO — ignore
+async function handleMessage(message) {
+    if (!message.text || (message.from && message.from.is_bot)) return;
+    const chatId = String(message.chat.id);
+    const command = message.text.trim().split(/[\s@]/)[0].toLowerCase();
 
-    // A "yes" in any other chat (a friend, a group, a stranger writing to
-    // the bot number) is not a pill reply.
-    if (!(await isFromUser(client, msg))) {
-        const chat = msg.fromMe ? msg.to : msg.from;
-        console.log(`↪️  Ignored a YES/NO in another chat (${maskId(chat)})`);
+    // ---- Setup mode: no TELEGRAM_CHAT_ID yet → tell the user theirs ----
+    if (!CHAT_ID) {
+        if (command === '/start') {
+            console.log(`🆔 /start from chat ID ${chatId} — put TELEGRAM_CHAT_ID=${chatId} in .env and restart`);
+            await tg.call('sendMessage', {
+                chat_id: chatId,
+                text: `👋 Almost ready!\n\nYour chat ID is ${chatId}.\n` +
+                      `Add this line to the bot's .env file and restart it:\n\nTELEGRAM_CHAT_ID=${chatId}`
+            });
+        }
         return;
     }
+
+    // ---- Only you: ignore everyone else who finds the bot ----
+    if (chatId !== CHAT_ID) {
+        console.log('↪️  Ignored a message from another Telegram chat');
+        return;
+    }
+
+    if (command === '/start' || command === '/help') {
+        await send(
+            `👋 <b>Pill reminder bot</b>\n\n` +
+            `I'll message you at each pill's time. Tap <b>✅ Taken</b> or <b>⏭️ Skip</b> on the reminder, ` +
+            `or type <b>YES</b> / <b>NO</b>.\n\n` +
+            `If more than one pill is waiting, tap the buttons on the right reminder, ` +
+            `or type e.g. <b>YES Aspirin</b>, <b>YES 2</b> or <b>YES ALL</b>.\n\n` +
+            `/status — today's schedule and what's waiting`);
+        return;
+    }
+    if (command === '/status') {
+        const schedule = [...config.pills]
+            .sort((a, b) => a.time.localeCompare(b.time))
+            .map(p => `• ${p.time} — <b>${esc(p.name)}</b> (${esc(p.dosage)})` +
+                (pendingReminders.has(p.name) ? ' ⏳ waiting' : ''))
+            .join('\n');
+        await send(`📋 <b>Your pills</b>\n${schedule}\n\n` +
+            (pendingReminders.size > 0
+                ? `⏳ Waiting for an answer:\n${numberedList(pendingNames())}`
+                : `✅ Nothing waiting for an answer.`));
+        return;
+    }
+
+    const parsed = parseReply(message.text);
+    if (!parsed) return;  // not a YES/NO — ignore
 
     const names = pendingNames();
 
     // "y mañana compro leche" with nothing pending is just a note, not a reply
     if (parsed.target && names.length === 0) return;
 
-    const myNumber = process.env.MY_WHATSAPP_NUMBER;
-    const send = (text) => sendToUser(client, myNumber, text)
-        .catch(err => console.error('❌ Failed to send reply:', err.message));
-
-    console.log(`💬 Got reply "${msg.body}" → ${parsed.response.toUpperCase()}` +
+    console.log(`💬 Got reply "${message.text}" → ${parsed.response.toUpperCase()}` +
         (parsed.target ? ` for "${parsed.target}"` : ''));
 
-    // If you swiped-to-reply on a reminder, use the pill it was for.
-    // Quoting any other message is ignored.
+    // If you replied to a reminder, use the pill it was for.
+    // Replying to any other message is ignored.
     let quote = null;
-    const quoted = await readQuotedMessage(msg);
-    if (quoted) {
-        const pillName = pillForQuotedMessage(quoted);
-        const isReminder = /^(💊 \*Pill Reminder\*|🔁 \*Still waiting on you!\*)/.test(quoted.body);
+    const replied = message.reply_to_message;
+    if (replied) {
+        const pillName = pillForMessageId(replied.message_id);
+        const isReminder = /^(💊 Pill Reminder|🔁 Still waiting on you!)/.test(replied.text || '');
         if (pillName || isReminder) quote = { pillName };
         console.log(pillName
             ? `   ↩️  Reply to the reminder for ${pillName}`
@@ -432,67 +418,123 @@ client.on('message_create', async (msg) => {
     const word = parsed.response.toUpperCase();
 
     if (result.status === 'none_pending') {
-        await send(`🤔 No pill reminders are waiting for a reply right now.`);
+        await send(`🤔 No pill reminders are waiting for an answer right now.`);
         return;
     }
     if (result.status === 'stale_quote') {
-        await send(`🤔 That reminder isn't waiting for a reply anymore.\n\n` +
+        await send(`🤔 That reminder isn't waiting for an answer anymore.\n\n` +
             `Still waiting on:\n${numberedList(names)}`);
         return;
     }
     if (result.status === 'ambiguous' || result.status === 'not_found') {
         const intro =
-            result.status === 'not_found' ? `❓ I couldn't find a waiting pill called "${parsed.target}".` :
-            parsed.target ? `❓ More than one waiting pill matches "${parsed.target}". Which one?` :
+            result.status === 'not_found' ? `❓ I couldn't find a waiting pill called "${esc(parsed.target)}".` :
+            parsed.target ? `❓ More than one waiting pill matches "${esc(parsed.target)}". Which one?` :
             `❓ More than one pill is waiting. Which one is this for?`;
-        await send(`${intro}\n\n${numberedList(names)}\n\n` +
-            `Reply e.g. *${word} ${names[0]}*, *${word} 1* or *${word} ALL*. ` +
-            `You can also reply directly to the reminder message.`);
+        // One button per waiting pill, carrying the YES/NO you typed
+        const code = parsed.response === 'yes' ? 'y' : 'n';
+        const emoji = parsed.response === 'yes' ? '✅' : '⏭️';
+        await send(`${intro}\n\nTap one below, or type <b>${word} ALL</b>.`,
+            names.map(name => [{ text: `${emoji} ${name}`, callback_data: `${code}:${name}` }]));
         return;
     }
 
-    // ---- status === 'ok' ----
-    for (const pillName of result.pills) {
-        const info = pendingReminders.get(pillName);
-        pendingReminders.delete(pillName);
+    await answerPills(result.pills, parsed.response);
+}
 
-        logResponse({
-            timestamp: new Date().toISOString(),
-            pillName,
-            response: parsed.response,
-            remindersSent: info.remindersSent,
-            originalReminderAt: info.firstSentAt.toISOString()
-        });
+// ------------------------------------------------------------
+// POLLING — ask Telegram for new messages/button presses (long polling,
+// so no public URL or webhook is needed)
+// ------------------------------------------------------------
+async function pollForever() {
+    let offset = 0;
+    for (;;) {
+        try {
+            const updates = await tg.call('getUpdates', {
+                offset,
+                timeout: 30,
+                allowed_updates: ['message', 'callback_query']
+            });
+            for (const update of updates) {
+                offset = update.update_id + 1;
+                try {
+                    if (update.message) await handleMessage(update.message);
+                    else if (update.callback_query) await handleButton(update.callback_query);
+                } catch (err) {
+                    console.error('❌ Error handling a Telegram update:', err.message);
+                }
+            }
+        } catch (err) {
+            console.error(`⚠️  ${err.message} — retrying in 5s`);
+            await new Promise(resolve => setTimeout(resolve, 5000));
+        }
     }
-    persist();
-    console.log(`   ✅ Cleared ${result.pills.join(', ')} from pending (${pendingReminders.size} remaining)`);
-
-    const pillList = result.pills.map(n => `*${n}*`).join(', ');
-    let ack = parsed.response === 'yes'
-        ? `🎉 Great! Logged that you took your ${pillList}. Stay healthy! 💪`
-        : `⏭️ Noted — you skipped ${pillList}. I won't keep reminding you.`;
-    if (pendingReminders.size > 0) {
-        ack += `\n\nStill waiting on:\n${numberedList(pendingNames())}`;
-    }
-    await send(ack);
-});
-
-// ------------------------------------------------------------
-// EVENT: Auth failure
-// ------------------------------------------------------------
-client.on('auth_failure', (msg) => {
-    console.error('❌ Authentication failed:', msg);
-});
-
-// ------------------------------------------------------------
-// EVENT: Disconnected
-// ------------------------------------------------------------
-client.on('disconnected', (reason) => {
-    console.log('⚠️  Disconnected:', reason);
-});
+}
 
 // ------------------------------------------------------------
 // START THE BOT
 // ------------------------------------------------------------
-console.log('🚀 Starting the pill reminder bot...');
-client.initialize();
+async function main() {
+    console.log('🚀 Starting the pill reminder bot...');
+
+    let me;
+    try {
+        me = await tg.call('getMe');
+    } catch (err) {
+        console.error(`❌ Could not connect to Telegram: ${err.message}`);
+        console.error('   Check TELEGRAM_BOT_TOKEN in .env and your internet connection.');
+        process.exit(1);
+    }
+    console.log(`✅ Connected to Telegram as @${me.username}`);
+    console.log('   Press Ctrl+C to stop the bot.');
+
+    await tg.call('setMyCommands', {
+        commands: [
+            { command: 'status', description: "Today's schedule and what's waiting" },
+            { command: 'help', description: 'How to answer reminders' }
+        ]
+    }).catch(err => console.error('⚠️  Could not set bot commands:', err.message));
+
+    if (!CHAT_ID) {
+        console.log('');
+        console.log('🔧 Setup mode: TELEGRAM_CHAT_ID is not set in .env.');
+        console.log(`   Open https://t.me/${me.username} in Telegram and press Start.`);
+        console.log('   The bot will reply with your chat ID.');
+        await pollForever();
+        return;
+    }
+
+    // Startup message listing loaded pills (and anything still unanswered)
+    const pillList = config.pills
+        .map(p => `  • ${p.time} — ${esc(p.name)} (${esc(p.dosage)})`)
+        .join('\n');
+    let message =
+        `👋 Pill reminder bot is online!\n\n` +
+        `Loaded ${config.pills.length} pill(s):\n${pillList}\n\n` +
+        `I'll remind you every ${config.reminderIntervalMinutes} min ` +
+        `until you answer.`;
+    if (pendingReminders.size > 0) {
+        message += `\n\n⏳ Still waiting on an answer for:\n${numberedList(pendingNames())}`;
+    }
+
+    try {
+        await send(message);
+        console.log('📤 Sent startup message');
+    } catch (err) {
+        console.error('❌ Failed to send startup message:', err.message);
+        console.error('   Is TELEGRAM_CHAT_ID right, and did you press Start in the bot chat?');
+    }
+
+    config.pills.forEach(p => {
+        console.log(`📅 Will remind for "${p.name}" daily at ${p.time}`);
+    });
+    console.log(`🔁 Checking every ${TICK_SECONDS}s (nag interval: ${config.reminderIntervalMinutes} min)`);
+
+    // First tick right away, so reminders missed while offline go out now.
+    tick();
+    setInterval(tick, TICK_SECONDS * 1000);
+
+    await pollForever();
+}
+
+main();

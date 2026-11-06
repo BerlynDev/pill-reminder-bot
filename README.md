@@ -1,14 +1,42 @@
 # Pill Reminder Bot 💊
 
-A personal WhatsApp bot that sends scheduled pill reminders and tracks adherence.
+A personal Telegram bot that sends scheduled pill reminders and tracks adherence.
 
 ## Features
 - Configurable pill schedule via `pills.json`
-- WhatsApp reminders at the configured times
-- Re-sends until you confirm with "YES"
-- Logs every response to `history.json`
+- Telegram reminders at the configured times, with **✅ Taken / ⏭️ Skip** buttons
+- Re-sends until you answer
+- Logs every answer to `history.json`
 - Remembers unanswered reminders across restarts (`state.json`)
 - Catches up on reminders missed while the bot was offline or the computer was asleep
+- Only talks to you: messages from anyone else are ignored
+- No browser, no extra packages: just Node.js and the official Telegram Bot API
+
+## Setup
+1. In Telegram, message **@BotFather** → `/newbot` → pick a name and a username ending in `bot`. Copy the **token**.
+2. `npm install`
+3. Copy `.env.example` → `.env` and set `TELEGRAM_BOT_TOKEN`
+4. Copy `pills.example.json` → `pills.json` and add your medications
+5. `npm start` → the bot starts in **setup mode**. Open your bot in Telegram and press **Start**; it replies with your chat ID.
+6. Put that in `.env` as `TELEGRAM_CHAT_ID`, then restart with `npm start`
+
+## Answering reminders
+Tap **✅ Taken** or **⏭️ Skip** on the reminder. That always answers that exact pill.
+
+You can also type:
+
+| Message | Answers |
+|---|---|
+| `YES` / `NO` | the only pill waiting for an answer |
+| `YES` / `NO` as a reply to a reminder | the pill that reminder was for |
+| `YES Aspirin` / `NO vit` | the pill matching that (partial) name |
+| `YES 2` | pill #2 in the list the bot sends when it's unsure |
+| `YES ALL` | every pill waiting for an answer |
+
+If several pills are waiting and it's unclear which one you mean, the bot asks with one button per pill.
+`SI`, `Y`, `N`, ✅, ❌, 👍 and 👎 work too.
+
+Commands: `/status` (today's schedule and what's waiting), `/help`.
 
 ## Missed reminders
 If the bot wasn't running at a pill's time (restart, crash, computer asleep), it checks as soon as it's back:
@@ -16,41 +44,18 @@ If the bot wasn't running at a pill's time (restart, crash, computer asleep), it
 | How late | What happens |
 |---|---|
 | Within `missedReminderWindowMinutes` (default 180) | Sends the reminder marked **(late)**, then nags as usual |
-| Later than that | Sends a one-off ⚠️ *Missed reminder* notice; doesn't ask YES/NO for that dose |
+| Later than that | Sends a one-off ⚠️ *Missed reminder* notice; doesn't ask about that dose |
 
 A pill that's new (or the very first run) whose time already passed today starts from its next scheduled time instead of sending an old reminder.
 
-## Replying
-| Reply | Marks |
+## `pills.json`
+| Field | Meaning |
 |---|---|
-| `YES` / `NO` | the only pill waiting for a reply |
-| `YES` / `NO` as a reply to a reminder message | the pill that reminder was for |
-| `YES Aspirin` / `NO vit` | the pill matching that (partial) name |
-| `YES 2` | pill #2 in the list the bot sends when it's unsure |
-| `YES ALL` | every pill waiting for a reply |
-
-If several pills are waiting and it's unclear which one you mean, the bot asks instead of guessing.
-`SI`, `Y`, `N`, ✅, ❌, 👍 and 👎 work too.
-
-Only replies from you, in your chat with the bot, count: a "yes" sent to a friend or a group is ignored.
-
-## Setup
-1. `npm install`
-2. Copy `.env.example` → `.env` and set `MY_WHATSAPP_NUMBER` to the number that should **receive** reminders
-3. Copy `pills.example.json` → `pills.json` and add your medications
-4. `node index.js`
-5. On first run, scan the QR code (WhatsApp → Settings → Linked devices → Link a device)
-
-### One number or two?
-| You scan the QR with… | Reminders arrive… | Notes |
-|---|---|---|
-| a **second** number (recommended) | as a normal chat from the bot number | You get regular notifications; your main account isn't the one automated |
-| the **same** number as `MY_WHATSAPP_NUMBER` | in your "Message yourself" chat | Messages sent from a linked device to yourself may not notify you |
-
-The bot detects which setup you're using on startup.
-
-> If `npm install` reports that Puppeteer's install script was skipped, download its browser with
-> `npx puppeteer browsers install chrome`.
+| `pills[].name` | Unique name, under ~60 characters |
+| `pills[].time` | 24-hour `HH:MM`, in the computer's local time |
+| `pills[].dosage`, `pills[].notes` | Shown in the reminder (`notes` optional) |
+| `reminderIntervalMinutes` | Minutes between repeat reminders |
+| `missedReminderWindowMinutes` | Optional, default 180 (see above) |
 
 ## Tech
-Built with [whatsapp-web.js](https://wwebjs.dev/) on Node.js.
+Node.js 18+ (built-in `fetch`) talking to the [Telegram Bot API](https://core.telegram.org/bots/api) with long polling, so no public URL or webhook is needed.
