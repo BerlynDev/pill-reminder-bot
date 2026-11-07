@@ -155,6 +155,43 @@ function esc(text) {
     return String(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
+// Today's answers from history.json: Map<"person|pill", latest entry today>
+function todaysAnswers() {
+    const answers = new Map();
+    let history = [];
+    try {
+        if (fs.existsSync(HISTORY_FILE)) history = JSON.parse(fs.readFileSync(HISTORY_FILE, 'utf8') || '[]');
+    } catch (err) {
+        console.error('⚠️  Could not read history.json for /status:', err.message);
+    }
+    const today = new Date().toDateString();
+    for (const entry of history) {
+        if (!entry.person || new Date(entry.timestamp).toDateString() !== today) continue;
+        answers.set(`${entry.person}|${entry.pillName}`, entry);   // later entries win
+    }
+    return answers;
+}
+
+// One line per pill for /status, in the reader's language `t`:
+// "• 08:00 — Aspirina ⏳ pendiente (2 recordatorios)" / "✅ tomada a las 08:04"
+function statusLines(person, t, answers) {
+    return [...person.pills]
+        .sort((a, b) => a.time.localeCompare(b.time))
+        .map(pill => {
+            let line = `• ${pill.time} — <b>${esc(pill.name)}</b>${doseSuffix(pill)}`;
+            const info = pending.get(keyOf(person, pill.name));
+            const answer = answers.get(`${person.name}|${pill.name}`);
+            if (info) {
+                line += t.statusPending(info.remindersSent);
+            } else if (answer) {
+                const at = new Date(answer.timestamp).toTimeString().slice(0, 5);
+                line += answer.response === 'yes' ? t.statusTaken(at) : t.statusSkipped(at);
+            }
+            return line;
+        })
+        .join('\n') || t.statusNone;
+}
+
 // " (100mg)" — or nothing when pills.json has no dosage for this pill
 function doseSuffix(pill) {
     const dosage = String(pill.dosage ?? '').trim();
@@ -484,14 +521,20 @@ async function handleMessage(message) {
         return;
     }
     if (command === 'status') {
+        // Your own pills, then the pills of everyone you're a caregiver for
+        const answers = todaysAnswers();
+        const caredFor = people.filter(p => p.caregivers.includes(person.name));
+        let text = `${t.statusTitle}\n${statusLines(person, t, answers)}`;
+        for (const other of caredFor) {
+            text += `\n\n${t.statusCaredFor(esc(other.name))}\n${statusLines(other, t, answers)}`;
+        }
         const waiting = pendingNames(person);
-        const schedule = [...person.pills]
-            .sort((a, b) => a.time.localeCompare(b.time))
-            .map(p => `• ${p.time} — <b>${esc(p.name)}</b>${doseSuffix(p)}` +
-                (waiting.includes(p.name) ? t.statusWaitingTag : ''))
-            .join('\n');
-        await sendTo(chatId, `${t.statusTitle}\n${schedule}\n\n` +
-            (waiting.length > 0 ? `${t.statusWaiting}\n${numberedList(waiting)}` : t.statusNothingWaiting));
+        if (person.pills.length > 0) {
+            text += `\n\n` + (waiting.length > 0
+                ? `${t.statusWaiting}\n${numberedList(waiting)}`
+                : t.statusNothingWaiting);
+        }
+        await sendTo(chatId, text);
         return;
     }
 

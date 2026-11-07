@@ -53,7 +53,11 @@ const en = {
         `or type e.g. <b>YES Aspirin</b>, <b>YES 2</b> or <b>YES ALL</b>.\n\n` +
         `/status — today's schedule and what's waiting`,
     statusTitle: '📋 <b>Your pills</b>',
-    statusWaitingTag: ' ⏳ waiting',
+    statusPending: (count) => ` ⏳ waiting (${count} reminder${count === 1 ? '' : 's'})`,
+    statusTaken: (time) => ` ✅ taken at ${time}`,
+    statusSkipped: (time) => ` ⏭️ skipped at ${time}`,
+    statusNone: '  (none)',
+    statusCaredFor: (name) => `👥 <b>${name}</b>`,
     statusWaiting: '⏳ Waiting for an answer:',
     statusNothingWaiting: '✅ Nothing waiting for an answer.',
     commands: [
@@ -133,7 +137,11 @@ const es = {
         `o escribe por ejemplo <b>SÍ Aspirina</b>, <b>SÍ 2</b> o <b>SÍ TODAS</b>.\n\n` +
         `/estado — horario de hoy y lo pendiente`,
     statusTitle: '📋 <b>Tus pastillas</b>',
-    statusWaitingTag: ' ⏳ pendiente',
+    statusPending: (count) => ` ⏳ pendiente (${count} recordatorio${count === 1 ? '' : 's'})`,
+    statusTaken: (time) => ` ✅ tomada a las ${time}`,
+    statusSkipped: (time) => ` ⏭️ omitida a las ${time}`,
+    statusNone: '  (ninguna)',
+    statusCaredFor: (name) => `👥 <b>${name}</b>`,
     statusWaiting: '⏳ Esperando respuesta:',
     statusNothingWaiting: '✅ No hay nada pendiente.',
     commands: [

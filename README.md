@@ -43,7 +43,7 @@ You can also type:
 If several pills are waiting and it's unclear which one you mean, the bot asks with one button per pill.
 `SI`, `Y`, `N`, ✅, ❌, 👍 and 👎 work too.
 
-Commands: `/status` (today's schedule and what's waiting), `/help`.
+Commands: `/status` / `/estado` (today's pills with ✅ taken / ⏭️ skipped / ⏳ waiting; caregivers also see everyone they look after), `/help` / `/ayuda`.
 
 ## Caregiver alerts
 Give a person `"caregivers": ["Yo"]` (names of other people in `pills.json`). If they haven't answered a pill after `caregiverAlertAfterReminders` reminders (default **3**: the first one + 2 repeats), each caregiver gets, in their own language:
