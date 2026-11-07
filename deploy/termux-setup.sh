@@ -45,7 +45,7 @@ cd "$APP_DIR" && exec bash deploy/termux-start.sh
 EOF
 chmod +x "$HOME/.termux/boot/pill-reminder"
 echo "   Created ~/.termux/boot/pill-reminder"
-echo "   Install the Termux:Boot app (same store as Termux) and open it ONCE."
+echo "   Install the Termux:Boot app from the SAME source as Termux (F-Droid or GitHub) and open it ONCE."
 
 # ---- 4. Private files ----------------------------------------------
 missing=()

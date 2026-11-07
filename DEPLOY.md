@@ -125,9 +125,15 @@ scp -i $HOME\.ssh\pill-bot.key ubuntu@<PUBLIC-IP>:~/pill-reminder-bot/history.js
 Free and no card needed. Use a phone that can stay **plugged in and on Wi-Fi** (an old phone is ideal). iPhones can't do this.
 
 ### C1. Install the apps
-1. Install **Termux** and **Termux:Boot** from **F-Droid** (f-droid.org) or Termux's GitHub releases. Both must come from the **same** source; the Google Play version is outdated.
+1. Install **Termux** and **Termux:Boot** from **F-Droid** (f-droid.org) or Termux's **GitHub** releases. **Both must come from the same source** (both F-Droid or both GitHub): they share a signing key, and Android refuses a mismatched pair with *"App not installed"*. The Google Play version is outdated.
 2. Open **Termux:Boot** once (so Android lets it start Termux after a reboot).
-3. Android settings → **Apps → Termux → Battery → Unrestricted** (also for Termux:Boot). On Samsung, also add Termux to *Never sleeping apps*; on Xiaomi, enable *Autostart*. More tips per brand: dontkillmyapp.com.
+3. Android settings → **Apps → Termux → Battery → Unrestricted** (also for Termux:Boot). On Samsung, also add Termux to *Never sleeping apps*. More tips per brand: dontkillmyapp.com.
+
+**Xiaomi / Redmi / POCO (MIUI, HyperOS)**: these kill background apps aggressively; do all of these, for **both** Termux and Termux:Boot:
+- **Settings → Apps → Manage apps → Termux → Autostart: on** (also in *Security → Permissions → Autostart*)
+- Same screen → **Battery saver → No restrictions**
+- **Recent apps** → press and hold the Termux card (or swipe it down) → **🔒 lock**
+- Never clear Termux from recents
 
 ### C2. Install the bot (in Termux)
 ```bash
@@ -139,6 +145,8 @@ bash deploy/termux-setup.sh
 It installs Node.js and the dependencies, and creates the auto-start script. It stops at *"Almost done — copy these files…"*.
 
 ### C3. Copy your private files (from your PC)
+*With a USB cable and ADB (Developer options → USB debugging) you can do this from the PC instead: `adb shell mkdir -p /sdcard/Download/PillReminder`, `adb push .env /sdcard/Download/PillReminder/env.txt`, `adb push pills.json /sdcard/Download/PillReminder/`, then use the `cp`/`rm` commands below with that folder.*
+
 1. On the PC, copy `.env` and name the copy **`env.txt`** (phones hide files starting with a dot). Put `env.txt` and `pills.json` (and optionally `history.json`, `state.json`) in the phone's **Download** folder: USB cable, or Quick Share/Nearby Share. **Don't** send them through chat apps or cloud drives (they contain the bot token).
 2. In Termux:
    ```bash
@@ -153,7 +161,7 @@ The phone already uses your local time, so `TIMEZONE` isn't needed (add `TIMEZON
 1. On your PC: **Ctrl+C** in the bot's terminal (stop the local copy).
 2. In Termux: `cd ~/pill-reminder-bot && bash deploy/termux-start.sh`
 3. You should see `✅ Connected to Telegram` and get the startup message. Termux's notification shows **"wake lock held"**.
-4. Leave Termux open in the background (don't swipe it away). After a reboot, Termux:Boot starts it by itself.
+4. Leave Termux open in the background (don't swipe it away). After a reboot, Termux:Boot starts it by itself, but **only after you unlock the phone once** (app data stays encrypted until then). On a Redmi 10 it started ~1 minute after unlocking; you get the startup message in Telegram.
 
 ### Everyday operations (Android)
 | Task | In Termux |

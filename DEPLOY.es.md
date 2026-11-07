@@ -125,9 +125,15 @@ scp -i $HOME\.ssh\pill-bot.key ubuntu@<IP-PÚBLICA>:~/pill-reminder-bot/history.
 Gratis y sin tarjeta. Usa un teléfono que pueda quedarse **enchufado y con Wi-Fi** (ideal uno viejo). Con iPhone no se puede.
 
 ### C1. Instalar las apps
-1. Instala **Termux** y **Termux:Boot** desde **F-Droid** (f-droid.org) o desde las releases de Termux en GitHub. Ambas deben venir del **mismo** lugar; la versión de Google Play está desactualizada.
+1. Instala **Termux** y **Termux:Boot** desde **F-Droid** (f-droid.org) o desde las releases de Termux en **GitHub**. **Ambas deben venir del mismo lugar** (las dos de F-Droid o las dos de GitHub): comparten la firma, y Android rechaza una pareja mezclada con *"App no instalada"*. La versión de Google Play está desactualizada.
 2. Abre **Termux:Boot** una vez (así Android le permite iniciar Termux al reiniciar).
-3. Ajustes de Android → **Aplicaciones → Termux → Batería → Sin restricciones** (también para Termux:Boot). En Samsung agrega Termux a *Aplicaciones que nunca se suspenden*; en Xiaomi activa *Inicio automático*. Más consejos por marca: dontkillmyapp.com.
+3. Ajustes de Android → **Aplicaciones → Termux → Batería → Sin restricciones** (también para Termux:Boot). En Samsung agrega Termux a *Aplicaciones que nunca se suspenden*. Más consejos por marca: dontkillmyapp.com.
+
+**Xiaomi / Redmi / POCO (MIUI, HyperOS)**: cierran apps en segundo plano de forma agresiva; haz todo esto, para Termux **y** Termux:Boot:
+- **Ajustes → Aplicaciones → Administrar aplicaciones → Termux → Inicio automático: activado** (también en *Seguridad → Permisos → Inicio automático*)
+- En la misma pantalla → **Ahorro de batería → Sin restricciones**
+- **Apps recientes** → mantén presionada la tarjeta de Termux (o deslízala hacia abajo) → **🔒 bloquear**
+- Nunca limpies Termux de las recientes
 
 ### C2. Instalar el bot (en Termux)
 ```bash
@@ -139,6 +145,8 @@ bash deploy/termux-setup.sh
 Instala Node.js, las dependencias y el script de inicio automático. Se detiene en *"Almost done — copy these files…"*.
 
 ### C3. Copiar tus archivos privados (desde tu PC)
+*Con cable USB y ADB (Opciones de desarrollador → Depuración USB) puedes hacerlo desde la PC: `adb shell mkdir -p /sdcard/Download/PillReminder`, `adb push .env /sdcard/Download/PillReminder/env.txt`, `adb push pills.json /sdcard/Download/PillReminder/`, y luego usa los comandos `cp`/`rm` de abajo con esa carpeta.*
+
 1. En la PC, copia `.env` y nombra la copia **`env.txt`** (los teléfonos ocultan archivos que empiezan con punto). Pon `env.txt` y `pills.json` (y opcionalmente `history.json`, `state.json`) en la carpeta **Descargas (Download)** del teléfono: cable USB o Quick Share/Nearby Share. **No** los envíes por apps de chat ni nubes (contienen el token del bot).
 2. En Termux:
    ```bash
@@ -153,7 +161,7 @@ El teléfono ya usa tu hora local, así que `TIMEZONE` no hace falta (agrega `TI
 1. En tu PC: **Ctrl+C** en la terminal del bot (detén la copia local).
 2. En Termux: `cd ~/pill-reminder-bot && bash deploy/termux-start.sh`
 3. Deberías ver `✅ Connected to Telegram` y recibir el mensaje de inicio. La notificación de Termux muestra **"wake lock held"**.
-4. Deja Termux abierto en segundo plano (no lo cierres deslizando). Si el teléfono se reinicia, Termux:Boot lo inicia solo.
+4. Deja Termux abierto en segundo plano (no lo cierres deslizando). Si el teléfono se reinicia, Termux:Boot lo inicia solo, pero **solo después de desbloquear el teléfono una vez** (los datos de las apps siguen cifrados hasta entonces). En un Redmi 10 arrancó ~1 minuto después de desbloquear; recibes el mensaje de inicio en Telegram.
 
 ### Operación diaria (Android)
 | Tarea | En Termux |
