@@ -628,7 +628,7 @@ async function main() {
     const t = owner.t;
     const pillList = owner.pills
         .map(p => `  • ${p.time} — ${esc(p.name)}${doseSuffix(p)}`)
-        .join('\n');
+        .join('\n') || '  —';   // the owner may only be a caregiver
     let message = t.online(owner.pills.length, pillList, config.reminderIntervalMinutes);
     const waiting = pendingNames(owner);
     if (waiting.length > 0) {

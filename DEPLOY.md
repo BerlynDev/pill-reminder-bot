@@ -4,7 +4,9 @@
 
 The bot only makes **outgoing** connections to Telegram, so the server needs no website, domain, or open ports besides SSH. Any small **Ubuntu** server works (the bot uses ~50 MB of RAM).
 
-**Overview:** create a server → connect with SSH → run `deploy/setup.sh` → copy `.env` and `pills.json` → stop the bot on your PC.
+**Two ways to host it:**
+- **A cloud server** (Oracle / Google, free, needs a card): sections 1–5 below. Overview: create a server → connect with SSH → run `deploy/setup.sh` → copy `.env` and `pills.json` → stop the bot on your PC.
+- **An Android phone** (free, no card): see **[Option C: Android phone](#option-c-android-phone-termux)** at the end.
 
 > ⚠️ Only **one copy** of the bot may run at a time. When the server copy starts, stop the one on your PC.
 
@@ -115,3 +117,52 @@ scp -i $HOME\.ssh\pill-bot.key ubuntu@<PUBLIC-IP>:~/pill-reminder-bot/history.js
 | `Conflict: terminated by other getUpdates request` | The bot is still running on your PC too → stop one |
 | `$'\r': command not found` | Script got Windows line endings; run `git checkout -- deploy/` (the repo enforces LF) |
 | Service keeps restarting | `journalctl -u pill-reminder -n 50` shows the error (usually `.env` / `pills.json`) |
+
+---
+
+## Option C: Android phone (Termux)
+
+Free and no card needed. Use a phone that can stay **plugged in and on Wi-Fi** (an old phone is ideal). iPhones can't do this.
+
+### C1. Install the apps
+1. Install **Termux** and **Termux:Boot** from **F-Droid** (f-droid.org) or Termux's GitHub releases. Both must come from the **same** source; the Google Play version is outdated.
+2. Open **Termux:Boot** once (so Android lets it start Termux after a reboot).
+3. Android settings → **Apps → Termux → Battery → Unrestricted** (also for Termux:Boot). On Samsung, also add Termux to *Never sleeping apps*; on Xiaomi, enable *Autostart*. More tips per brand: dontkillmyapp.com.
+
+### C2. Install the bot (in Termux)
+```bash
+pkg install -y git
+git clone https://github.com/BerlynDev/pill-reminder-bot.git
+cd pill-reminder-bot
+bash deploy/termux-setup.sh
+```
+It installs Node.js and the dependencies, and creates the auto-start script. It stops at *"Almost done — copy these files…"*.
+
+### C3. Copy your private files (from your PC)
+1. On the PC, copy `.env` and name the copy **`env.txt`** (phones hide files starting with a dot). Put `env.txt` and `pills.json` (and optionally `history.json`, `state.json`) in the phone's **Download** folder: USB cable, or Quick Share/Nearby Share. **Don't** send them through chat apps or cloud drives (they contain the bot token).
+2. In Termux:
+   ```bash
+   termux-setup-storage        # allow access to the phone's storage (tap Allow)
+   cp ~/storage/downloads/env.txt ~/pill-reminder-bot/.env
+   cp ~/storage/downloads/pills.json ~/pill-reminder-bot/
+   rm ~/storage/downloads/env.txt ~/storage/downloads/pills.json   # other apps can read Download!
+   ```
+The phone already uses your local time, so `TIMEZONE` isn't needed (add `TIMEZONE=America/Guayaquil` to `.env` if the phone might travel).
+
+### C4. Switch over
+1. On your PC: **Ctrl+C** in the bot's terminal (stop the local copy).
+2. In Termux: `cd ~/pill-reminder-bot && bash deploy/termux-start.sh`
+3. You should see `✅ Connected to Telegram` and get the startup message. Termux's notification shows **"wake lock held"**.
+4. Leave Termux open in the background (don't swipe it away). After a reboot, Termux:Boot starts it by itself.
+
+### Everyday operations (Android)
+| Task | In Termux |
+|---|---|
+| See the log | `tail -f ~/pill-reminder.log` (Ctrl+C to stop watching) |
+| Restart the bot | `pkill -f "node index.js"` (back within 10 s) |
+| Stop completely | Ctrl+C in the session running `termux-start.sh` |
+| Edit pills | `nano ~/pill-reminder-bot/pills.json` (Ctrl+O save, Ctrl+X exit), then restart |
+| Update after merging a PR | `cd ~/pill-reminder-bot && bash deploy/termux-update.sh` |
+| Back up history | `cp ~/pill-reminder-bot/history.json ~/storage/downloads/` |
+
+If reminders stop arriving: check the phone is on, charging and online, that Termux still shows "wake lock held", and the battery settings in C1.

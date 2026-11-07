@@ -4,7 +4,9 @@
 
 El bot solo hace conexiones **de salida** hacia Telegram, así que el servidor no necesita página web, dominio ni puertos abiertos aparte de SSH. Sirve cualquier servidor **Ubuntu** pequeño (el bot usa ~50 MB de RAM).
 
-**Resumen:** crear un servidor → conectarte por SSH → ejecutar `deploy/setup.sh` → copiar `.env` y `pills.json` → detener el bot en tu PC.
+**Dos formas de alojarlo:**
+- **Un servidor en la nube** (Oracle / Google, gratis, pide tarjeta): secciones 1–5. Resumen: crear un servidor → conectarte por SSH → ejecutar `deploy/setup.sh` → copiar `.env` y `pills.json` → detener el bot en tu PC.
+- **Un teléfono Android** (gratis, sin tarjeta): ver **[Opción C: teléfono Android](#opción-c-teléfono-android-termux)** al final.
 
 > ⚠️ Solo puede correr **una copia** del bot a la vez. Cuando arranque la del servidor, detén la de tu PC.
 
@@ -115,3 +117,52 @@ scp -i $HOME\.ssh\pill-bot.key ubuntu@<IP-PÚBLICA>:~/pill-reminder-bot/history.
 | `Conflict: terminated by other getUpdates request` | El bot sigue corriendo también en tu PC → detén uno |
 | `$'\r': command not found` | El script tiene finales de línea de Windows; ejecuta `git checkout -- deploy/` (el repo fuerza LF) |
 | El servicio se reinicia sin parar | `journalctl -u pill-reminder -n 50` muestra el error (normalmente `.env` / `pills.json`) |
+
+---
+
+## Opción C: teléfono Android (Termux)
+
+Gratis y sin tarjeta. Usa un teléfono que pueda quedarse **enchufado y con Wi-Fi** (ideal uno viejo). Con iPhone no se puede.
+
+### C1. Instalar las apps
+1. Instala **Termux** y **Termux:Boot** desde **F-Droid** (f-droid.org) o desde las releases de Termux en GitHub. Ambas deben venir del **mismo** lugar; la versión de Google Play está desactualizada.
+2. Abre **Termux:Boot** una vez (así Android le permite iniciar Termux al reiniciar).
+3. Ajustes de Android → **Aplicaciones → Termux → Batería → Sin restricciones** (también para Termux:Boot). En Samsung agrega Termux a *Aplicaciones que nunca se suspenden*; en Xiaomi activa *Inicio automático*. Más consejos por marca: dontkillmyapp.com.
+
+### C2. Instalar el bot (en Termux)
+```bash
+pkg install -y git
+git clone https://github.com/BerlynDev/pill-reminder-bot.git
+cd pill-reminder-bot
+bash deploy/termux-setup.sh
+```
+Instala Node.js, las dependencias y el script de inicio automático. Se detiene en *"Almost done — copy these files…"*.
+
+### C3. Copiar tus archivos privados (desde tu PC)
+1. En la PC, copia `.env` y nombra la copia **`env.txt`** (los teléfonos ocultan archivos que empiezan con punto). Pon `env.txt` y `pills.json` (y opcionalmente `history.json`, `state.json`) en la carpeta **Descargas (Download)** del teléfono: cable USB o Quick Share/Nearby Share. **No** los envíes por apps de chat ni nubes (contienen el token del bot).
+2. En Termux:
+   ```bash
+   termux-setup-storage        # permitir acceso al almacenamiento (toca Permitir)
+   cp ~/storage/downloads/env.txt ~/pill-reminder-bot/.env
+   cp ~/storage/downloads/pills.json ~/pill-reminder-bot/
+   rm ~/storage/downloads/env.txt ~/storage/downloads/pills.json   # ¡otras apps pueden leer Descargas!
+   ```
+El teléfono ya usa tu hora local, así que `TIMEZONE` no hace falta (agrega `TIMEZONE=America/Guayaquil` al `.env` si el teléfono podría viajar).
+
+### C4. Cambiar al teléfono
+1. En tu PC: **Ctrl+C** en la terminal del bot (detén la copia local).
+2. En Termux: `cd ~/pill-reminder-bot && bash deploy/termux-start.sh`
+3. Deberías ver `✅ Connected to Telegram` y recibir el mensaje de inicio. La notificación de Termux muestra **"wake lock held"**.
+4. Deja Termux abierto en segundo plano (no lo cierres deslizando). Si el teléfono se reinicia, Termux:Boot lo inicia solo.
+
+### Operación diaria (Android)
+| Tarea | En Termux |
+|---|---|
+| Ver el log | `tail -f ~/pill-reminder.log` (Ctrl+C para dejar de mirar) |
+| Reiniciar el bot | `pkill -f "node index.js"` (vuelve en 10 s) |
+| Detener del todo | Ctrl+C en la sesión que corre `termux-start.sh` |
+| Editar pastillas | `nano ~/pill-reminder-bot/pills.json` (Ctrl+O guardar, Ctrl+X salir), luego reiniciar |
+| Actualizar tras un PR | `cd ~/pill-reminder-bot && bash deploy/termux-update.sh` |
+| Respaldar el historial | `cp ~/pill-reminder-bot/history.json ~/storage/downloads/` |
+
+Si dejan de llegar recordatorios: revisa que el teléfono esté encendido, cargando y con internet, que Termux siga mostrando "wake lock held", y los ajustes de batería de C1.
