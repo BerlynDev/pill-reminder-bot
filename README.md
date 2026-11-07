@@ -83,7 +83,7 @@ See `pills.example.json`.
 | `people[].language` | `es` or `en` (optional; default `BOT_LANGUAGE`) |
 | `people[].caregivers` | Optional list of other people's names to alert |
 | `people[].pills[].name` | Unique per person, under ~60 characters |
-| `people[].pills[].time` | 24-hour `HH:MM`, in the computer's local time |
+| `people[].pills[].time` | 24-hour `HH:MM`, in `TIMEZONE` (or the computer's local time if unset) |
 | `people[].pills[].dosage`, `.notes` | Shown in the reminder (both optional) |
 | `reminderIntervalMinutes` | Minutes between repeat reminders |
 | `missedReminderWindowMinutes` | Optional, default 180 (see above) |
@@ -92,6 +92,9 @@ See `pills.example.json`.
 The **first person** is the owner: they get the startup message and are told when someone new presses Start.
 
 The older single-person format (`{ "pills": [...] }` plus `TELEGRAM_CHAT_ID` in `.env`) still works.
+
+## Run it 24/7 on a server
+See **[DEPLOY.md](DEPLOY.md)** (español: [DEPLOY.es.md](DEPLOY.es.md)): an **Android phone** with Termux (no card; `deploy/termux-*.sh`), or a free Ubuntu server (Oracle Cloud or Google Cloud), `deploy/setup.sh` to install it as an auto-restarting service, and `deploy/update.sh` after merging changes. Set `TIMEZONE` in `.env` on servers.
 
 ## Tech
 Node.js 18+ (built-in `fetch`) talking to the [Telegram Bot API](https://core.telegram.org/bots/api) with long polling, so no public URL or webhook is needed.
