@@ -4,7 +4,8 @@
 //
 // Pick the language with BOT_LANGUAGE in .env ("es" or "en"); default "es".
 // Text uses Telegram HTML: wrap values from pills.json in esc() first —
-// callers pass names/dosages/notes already escaped.
+// callers pass names/dosages/notes already escaped. `dosage` arrives as
+// " (100mg)" or "" (dosage is optional), so templates don't add brackets.
 //
 // To add a language, copy the `en` block and translate every entry.
 
@@ -13,13 +14,13 @@ const en = {
     reminderTitle: '💊 Pill Reminder',          // plain text, also used to recognise replies
     nagTitle: '🔁 Still waiting on you!',       // plain text, also used to recognise replies
     late: ' (late)',
-    dueNow: (time, name, dosage) => `It's ${time} — time to take your <b>${name}</b> (${dosage}).`,
+    dueNow: (time, name, dosage) => `It's ${time} — time to take your <b>${name}</b>${dosage}.`,
     dueLate: (time, name, dosage) =>
-        `This was due at ${time} — time to take your <b>${name}</b> (${dosage}).\n` +
+        `This was due at ${time} — time to take your <b>${name}</b>${dosage}.\n` +
         `<i>I was offline or asleep at ${time}, so this reminder is late.</i>`,
     missed: (time, name, dosage, windowMinutes) =>
         `⚠️ <b>Missed reminder</b>\n\n` +
-        `I was offline at ${time}, when your <b>${name}</b> (${dosage}) was due, ` +
+        `I was offline at ${time}, when your <b>${name}</b>${dosage} was due, ` +
         `and that was more than ${windowMinutes} min ago, so I won't ask about this dose.`,
     nag: (name, number) => `Did you take your <b>${name}</b> yet?\n(This is reminder #${number})`,
 
@@ -66,9 +67,22 @@ const en = {
         `Loaded ${count} pill(s):\n${list}\n\n` +
         `I'll remind you every ${interval} min until you answer.`,
     onlineWaiting: '⏳ Still waiting on an answer for:',
+    onlineOthers: (list) => `👥 Also reminding:\n${list}`,
     setup: (chatId) =>
         `👋 Almost ready!\n\nYour chat ID is ${chatId}.\n` +
-        `Add this line to the bot's .env file and restart it:\n\nTELEGRAM_CHAT_ID=${chatId}`
+        `Add this line to the bot's .env file and restart it:\n\nTELEGRAM_CHAT_ID=${chatId}`,
+
+    // Other people
+    setupGuest: (chatId) =>
+        `👋 Hi! This is a private pill reminder bot.\n\nYour chat ID is ${chatId}.\n` +
+        `Send it to the person who manages the bot so they can add you.`,
+    newPerson: (name, chatId) =>
+        `👤 <b>${name}</b> pressed Start on the bot.\nChat ID: <code>${chatId}</code>\n\n` +
+        `To send them reminders, add them under "people" in pills.json and restart.`,
+    caregiverAlert: (person, pill, time, count) =>
+        `⚠️ <b>${person}</b> hasn't confirmed <b>${pill}</b> (${time}) after ${count} reminders.`,
+    caregiverResolvedTaken: (person, pill) => `✅ <b>${person}</b> confirmed taking <b>${pill}</b>.`,
+    caregiverResolvedSkipped: (person, pill) => `⏭️ <b>${person}</b> skipped <b>${pill}</b>.`
 };
 
 // "la 01:30" but "las 09:00"
@@ -80,13 +94,13 @@ const es = {
     nagTitle: '🔁 ¡Sigo esperando!',
     late: ' (tarde)',
     dueNow: (time, name, dosage) =>
-        `${time.startsWith('01:') ? 'Es' : 'Son'} ${laLas(time)} — es hora de tomar tu <b>${name}</b> (${dosage}).`,
+        `${time.startsWith('01:') ? 'Es' : 'Son'} ${laLas(time)} — es hora de tomar tu <b>${name}</b>${dosage}.`,
     dueLate: (time, name, dosage) =>
-        `Tocaba a ${laLas(time)} — es hora de tomar tu <b>${name}</b> (${dosage}).\n` +
+        `Tocaba a ${laLas(time)} — es hora de tomar tu <b>${name}</b>${dosage}.\n` +
         `<i>Estaba desconectado o en reposo a ${laLas(time)}, por eso este recordatorio llega tarde.</i>`,
     missed: (time, name, dosage, windowMinutes) =>
         `⚠️ <b>Recordatorio perdido</b>\n\n` +
-        `Estaba desconectado a ${laLas(time)}, cuando tocaba tu <b>${name}</b> (${dosage}), ` +
+        `Estaba desconectado a ${laLas(time)}, cuando tocaba tu <b>${name}</b>${dosage}, ` +
         `y ya pasaron más de ${windowMinutes} min, así que no preguntaré por esta dosis.`,
     nag: (name, number) => `¿Ya tomaste tu <b>${name}</b>?\n(Recordatorio n.º ${number})`,
 
@@ -133,9 +147,22 @@ const es = {
         `Cargué ${count} pastilla(s):\n${list}\n\n` +
         `Te recordaré cada ${interval} min hasta que respondas.`,
     onlineWaiting: '⏳ Aún esperando respuesta de:',
+    onlineOthers: (list) => `👥 También recuerdo a:\n${list}`,
     setup: (chatId) =>
         `👋 ¡Casi listo!\n\nTu chat ID es ${chatId}.\n` +
-        `Agrega esta línea al archivo .env del bot y reinícialo:\n\nTELEGRAM_CHAT_ID=${chatId}`
+        `Agrega esta línea al archivo .env del bot y reinícialo:\n\nTELEGRAM_CHAT_ID=${chatId}`,
+
+    // Otras personas
+    setupGuest: (chatId) =>
+        `👋 ¡Hola! Este es un bot privado de recordatorios de pastillas.\n\nTu chat ID es ${chatId}.\n` +
+        `Envíaselo a la persona que administra el bot para que te agregue.`,
+    newPerson: (name, chatId) =>
+        `👤 <b>${name}</b> presionó Iniciar en el bot.\nChat ID: <code>${chatId}</code>\n\n` +
+        `Para enviarle recordatorios, agrégalo en "people" dentro de pills.json y reinicia.`,
+    caregiverAlert: (person, pill, time, count) =>
+        `⚠️ <b>${person}</b> no ha confirmado <b>${pill}</b> (${time}) después de ${count} recordatorios.`,
+    caregiverResolvedTaken: (person, pill) => `✅ <b>${person}</b> confirmó que tomó <b>${pill}</b>.`,
+    caregiverResolvedSkipped: (person, pill) => `⏭️ <b>${person}</b> omitió <b>${pill}</b>.`
 };
 
 const LANGUAGES = { en, es };
