@@ -9,17 +9,23 @@ A personal Telegram bot that sends scheduled pill reminders and tracks adherence
 - Logs every answer to `history.json`
 - Remembers unanswered reminders across restarts (`state.json`)
 - Catches up on reminders missed while the bot was offline or the computer was asleep
-- Only talks to you: messages from anyone else are ignored
-- Spanish (default) or English (`BOT_LANGUAGE=es` / `en` in `.env`)
+- **Several people** from one bot, each with their own pills, language, history and commands
+- **Caregiver alerts**: if someone doesn't answer after N reminders (default 3), their caregiver is told, and told again when they answer
+- Only talks to the people in `pills.json`; everyone else is ignored
+- Spanish (default) or English, per person
 - No browser, no extra packages: just Node.js and the official Telegram Bot API
 
 ## Setup
 1. In Telegram, message **@BotFather** → `/newbot` → pick a name and a username ending in `bot`. Copy the **token**.
 2. `npm install`
 3. Copy `.env.example` → `.env` and set `TELEGRAM_BOT_TOKEN`
-4. Copy `pills.example.json` → `pills.json` and add your medications
-5. `npm start` → the bot starts in **setup mode**. Open your bot in Telegram and press **Start**; it replies with your chat ID.
-6. Put that in `.env` as `TELEGRAM_CHAT_ID`, then restart with `npm start`
+4. `npm start` → with nobody configured yet, the bot starts in **setup mode**. Open your bot in Telegram and press **Start**; it replies with your chat ID.
+5. Copy `pills.example.json` → `pills.json`, put your chat ID in the first person, add your medications, then restart with `npm start`
+
+### Adding another person
+1. They open the bot in Telegram and press **Start**. They get a "private bot" message with their chat ID, and **you** (the first person in `pills.json`) get a notice with their name and chat ID.
+2. Add them to `"people"` in `pills.json` with that `chatId`, their pills, their `language`, and optionally `"caregivers": ["<your name>"]`.
+3. Restart the bot. Only people in `pills.json` get reminders or answers.
 
 ## Answering reminders
 Tap **✅ Taken** or **⏭️ Skip** on the reminder. That always answers that exact pill.
@@ -39,8 +45,15 @@ If several pills are waiting and it's unclear which one you mean, the bot asks w
 
 Commands: `/status` (today's schedule and what's waiting), `/help`.
 
+## Caregiver alerts
+Give a person `"caregivers": ["Yo"]` (names of other people in `pills.json`). If they haven't answered a pill after `caregiverAlertAfterReminders` reminders (default **3**: the first one + 2 repeats), each caregiver gets, in their own language:
+
+> ⚠️ **Mamá** no ha confirmado **Losartán** (07:00) después de 3 recordatorios.
+
+The person keeps getting reminders. When they finally answer, caregivers get a follow-up (✅ confirmed / ⏭️ skipped).
+
 ## Language / Idioma
-Set `BOT_LANGUAGE` in `.env`:
+Each person's `"language"` in `pills.json` (`es` or `en`) wins; otherwise `BOT_LANGUAGE` in `.env` (default `es`) is used:
 
 | Value | Bot speaks | Buttons | Commands |
 |---|---|---|---|
@@ -61,13 +74,24 @@ If the bot wasn't running at a pill's time (restart, crash, computer asleep), it
 A pill that's new (or the very first run) whose time already passed today starts from its next scheduled time instead of sending an old reminder.
 
 ## `pills.json`
+See `pills.example.json`.
+
 | Field | Meaning |
 |---|---|
-| `pills[].name` | Unique name, under ~60 characters |
-| `pills[].time` | 24-hour `HH:MM`, in the computer's local time |
-| `pills[].dosage`, `pills[].notes` | Shown in the reminder (`notes` optional) |
+| `people[].name` | Unique name (used in caregiver alerts and history) |
+| `people[].chatId` | The number the bot replies with when they press **Start** |
+| `people[].language` | `es` or `en` (optional; default `BOT_LANGUAGE`) |
+| `people[].caregivers` | Optional list of other people's names to alert |
+| `people[].pills[].name` | Unique per person, under ~60 characters |
+| `people[].pills[].time` | 24-hour `HH:MM`, in the computer's local time |
+| `people[].pills[].dosage`, `.notes` | Shown in the reminder (`notes` optional) |
 | `reminderIntervalMinutes` | Minutes between repeat reminders |
 | `missedReminderWindowMinutes` | Optional, default 180 (see above) |
+| `caregiverAlertAfterReminders` | Optional, default 3 |
+
+The **first person** is the owner: they get the startup message and are told when someone new presses Start.
+
+The older single-person format (`{ "pills": [...] }` plus `TELEGRAM_CHAT_ID` in `.env`) still works.
 
 ## Tech
 Node.js 18+ (built-in `fetch`) talking to the [Telegram Bot API](https://core.telegram.org/bots/api) with long polling, so no public URL or webhook is needed.

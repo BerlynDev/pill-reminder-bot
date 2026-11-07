@@ -66,9 +66,22 @@ const en = {
         `Loaded ${count} pill(s):\n${list}\n\n` +
         `I'll remind you every ${interval} min until you answer.`,
     onlineWaiting: '⏳ Still waiting on an answer for:',
+    onlineOthers: (list) => `👥 Also reminding:\n${list}`,
     setup: (chatId) =>
         `👋 Almost ready!\n\nYour chat ID is ${chatId}.\n` +
-        `Add this line to the bot's .env file and restart it:\n\nTELEGRAM_CHAT_ID=${chatId}`
+        `Add this line to the bot's .env file and restart it:\n\nTELEGRAM_CHAT_ID=${chatId}`,
+
+    // Other people
+    setupGuest: (chatId) =>
+        `👋 Hi! This is a private pill reminder bot.\n\nYour chat ID is ${chatId}.\n` +
+        `Send it to the person who manages the bot so they can add you.`,
+    newPerson: (name, chatId) =>
+        `👤 <b>${name}</b> pressed Start on the bot.\nChat ID: <code>${chatId}</code>\n\n` +
+        `To send them reminders, add them under "people" in pills.json and restart.`,
+    caregiverAlert: (person, pill, time, count) =>
+        `⚠️ <b>${person}</b> hasn't confirmed <b>${pill}</b> (${time}) after ${count} reminders.`,
+    caregiverResolvedTaken: (person, pill) => `✅ <b>${person}</b> confirmed taking <b>${pill}</b>.`,
+    caregiverResolvedSkipped: (person, pill) => `⏭️ <b>${person}</b> skipped <b>${pill}</b>.`
 };
 
 // "la 01:30" but "las 09:00"
@@ -133,9 +146,22 @@ const es = {
         `Cargué ${count} pastilla(s):\n${list}\n\n` +
         `Te recordaré cada ${interval} min hasta que respondas.`,
     onlineWaiting: '⏳ Aún esperando respuesta de:',
+    onlineOthers: (list) => `👥 También recuerdo a:\n${list}`,
     setup: (chatId) =>
         `👋 ¡Casi listo!\n\nTu chat ID es ${chatId}.\n` +
-        `Agrega esta línea al archivo .env del bot y reinícialo:\n\nTELEGRAM_CHAT_ID=${chatId}`
+        `Agrega esta línea al archivo .env del bot y reinícialo:\n\nTELEGRAM_CHAT_ID=${chatId}`,
+
+    // Otras personas
+    setupGuest: (chatId) =>
+        `👋 ¡Hola! Este es un bot privado de recordatorios de pastillas.\n\nTu chat ID es ${chatId}.\n` +
+        `Envíaselo a la persona que administra el bot para que te agregue.`,
+    newPerson: (name, chatId) =>
+        `👤 <b>${name}</b> presionó Iniciar en el bot.\nChat ID: <code>${chatId}</code>\n\n` +
+        `Para enviarle recordatorios, agrégalo en "people" dentro de pills.json y reinicia.`,
+    caregiverAlert: (person, pill, time, count) =>
+        `⚠️ <b>${person}</b> no ha confirmado <b>${pill}</b> (${time}) después de ${count} recordatorios.`,
+    caregiverResolvedTaken: (person, pill) => `✅ <b>${person}</b> confirmó que tomó <b>${pill}</b>.`,
+    caregiverResolvedSkipped: (person, pill) => `⏭️ <b>${person}</b> omitió <b>${pill}</b>.`
 };
 
 const LANGUAGES = { en, es };

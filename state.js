@@ -21,7 +21,8 @@ function loadState(file) {
                 firstSentAt: new Date(p.firstSentAt),
                 lastSentAt: new Date(p.lastSentAt),
                 remindersSent: p.remindersSent,
-                messageIds: p.messageIds || []
+                messageIds: p.messageIds || [],
+                caregiverAlerted: Boolean(p.caregiverAlerted)
             }])
         );
         const lastFiredAt = new Map(
@@ -44,7 +45,8 @@ function saveState(file, { pending, lastFiredAt }) {
                 firstSentAt: p.firstSentAt.toISOString(),
                 lastSentAt: p.lastSentAt.toISOString(),
                 remindersSent: p.remindersSent,
-                messageIds: p.messageIds
+                messageIds: p.messageIds,
+                caregiverAlerted: Boolean(p.caregiverAlerted)
             }])
         ),
         lastFiredAt: Object.fromEntries(

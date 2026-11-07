@@ -1,18 +1,25 @@
 {
-  "pills": [
+  "people": [
     {
-      "name": "Aspirin",
-      "time": "11:31",
-      "dosage": "100mg",
-      "notes": "Take with food"
+      "name": "Yo",
+      "chatId": "111111111",
+      "language": "es",
+      "pills": [
+        { "name": "Aspirina", "time": "08:00", "dosage": "100mg", "notes": "Con comida" },
+        { "name": "Vitamina D", "time": "21:00", "dosage": "1000 IU", "notes": "" }
+      ]
     },
     {
-      "name": "Vitamin D",
-      "time": "21:00",
-      "dosage": "1000 IU",
-      "notes": ""
+      "name": "Mamá",
+      "chatId": "222222222",
+      "language": "es",
+      "caregivers": ["Yo"],
+      "pills": [
+        { "name": "Losartán", "time": "07:00", "dosage": "50mg", "notes": "Con un vaso de agua" }
+      ]
     }
   ],
-  "reminderIntervalMinutes": 10,
-  "missedReminderWindowMinutes": 180
+  "reminderIntervalMinutes": 5,
+  "missedReminderWindowMinutes": 180,
+  "caregiverAlertAfterReminders": 3
 }
