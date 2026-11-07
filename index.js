@@ -141,6 +141,12 @@ function esc(text) {
     return String(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
+// " (100mg)" — or nothing when pills.json has no dosage for this pill
+function doseSuffix(pill) {
+    const dosage = String(pill.dosage ?? '').trim();
+    return dosage ? ` (${esc(dosage)})` : '';
+}
+
 // This person's pending pill names, oldest reminder first (numbered lists)
 function pendingNames(person) {
     const prefix = `${person.chatId}|`;
@@ -288,7 +294,7 @@ async function runTick() {
             let text;
             let buttons = null;
             const name = esc(pill.name);
-            const dosage = esc(pill.dosage);
+            const dosage = doseSuffix(pill);
             if (action === 'missed') {
                 text = t.missed(pill.time, name, dosage, windowMinutes);
             } else {
@@ -467,7 +473,7 @@ async function handleMessage(message) {
         const waiting = pendingNames(person);
         const schedule = [...person.pills]
             .sort((a, b) => a.time.localeCompare(b.time))
-            .map(p => `• ${p.time} — <b>${esc(p.name)}</b> (${esc(p.dosage)})` +
+            .map(p => `• ${p.time} — <b>${esc(p.name)}</b>${doseSuffix(p)}` +
                 (waiting.includes(p.name) ? t.statusWaitingTag : ''))
             .join('\n');
         await sendTo(chatId, `${t.statusTitle}\n${schedule}\n\n` +
@@ -604,7 +610,7 @@ async function main() {
     // else the bot is reminding
     const t = owner.t;
     const pillList = owner.pills
-        .map(p => `  • ${p.time} — ${esc(p.name)} (${esc(p.dosage)})`)
+        .map(p => `  • ${p.time} — ${esc(p.name)}${doseSuffix(p)}`)
         .join('\n');
     let message = t.online(owner.pills.length, pillList, config.reminderIntervalMinutes);
     const waiting = pendingNames(owner);

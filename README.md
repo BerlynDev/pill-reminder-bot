@@ -84,7 +84,7 @@ See `pills.example.json`.
 | `people[].caregivers` | Optional list of other people's names to alert |
 | `people[].pills[].name` | Unique per person, under ~60 characters |
 | `people[].pills[].time` | 24-hour `HH:MM`, in the computer's local time |
-| `people[].pills[].dosage`, `.notes` | Shown in the reminder (`notes` optional) |
+| `people[].pills[].dosage`, `.notes` | Shown in the reminder (both optional) |
 | `reminderIntervalMinutes` | Minutes between repeat reminders |
 | `missedReminderWindowMinutes` | Optional, default 180 (see above) |
 | `caregiverAlertAfterReminders` | Optional, default 3 |

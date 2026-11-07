@@ -4,7 +4,8 @@
 //
 // Pick the language with BOT_LANGUAGE in .env ("es" or "en"); default "es".
 // Text uses Telegram HTML: wrap values from pills.json in esc() first —
-// callers pass names/dosages/notes already escaped.
+// callers pass names/dosages/notes already escaped. `dosage` arrives as
+// " (100mg)" or "" (dosage is optional), so templates don't add brackets.
 //
 // To add a language, copy the `en` block and translate every entry.
 
@@ -13,13 +14,13 @@ const en = {
     reminderTitle: '💊 Pill Reminder',          // plain text, also used to recognise replies
     nagTitle: '🔁 Still waiting on you!',       // plain text, also used to recognise replies
     late: ' (late)',
-    dueNow: (time, name, dosage) => `It's ${time} — time to take your <b>${name}</b> (${dosage}).`,
+    dueNow: (time, name, dosage) => `It's ${time} — time to take your <b>${name}</b>${dosage}.`,
     dueLate: (time, name, dosage) =>
-        `This was due at ${time} — time to take your <b>${name}</b> (${dosage}).\n` +
+        `This was due at ${time} — time to take your <b>${name}</b>${dosage}.\n` +
         `<i>I was offline or asleep at ${time}, so this reminder is late.</i>`,
     missed: (time, name, dosage, windowMinutes) =>
         `⚠️ <b>Missed reminder</b>\n\n` +
-        `I was offline at ${time}, when your <b>${name}</b> (${dosage}) was due, ` +
+        `I was offline at ${time}, when your <b>${name}</b>${dosage} was due, ` +
         `and that was more than ${windowMinutes} min ago, so I won't ask about this dose.`,
     nag: (name, number) => `Did you take your <b>${name}</b> yet?\n(This is reminder #${number})`,
 
@@ -93,13 +94,13 @@ const es = {
     nagTitle: '🔁 ¡Sigo esperando!',
     late: ' (tarde)',
     dueNow: (time, name, dosage) =>
-        `${time.startsWith('01:') ? 'Es' : 'Son'} ${laLas(time)} — es hora de tomar tu <b>${name}</b> (${dosage}).`,
+        `${time.startsWith('01:') ? 'Es' : 'Son'} ${laLas(time)} — es hora de tomar tu <b>${name}</b>${dosage}.`,
     dueLate: (time, name, dosage) =>
-        `Tocaba a ${laLas(time)} — es hora de tomar tu <b>${name}</b> (${dosage}).\n` +
+        `Tocaba a ${laLas(time)} — es hora de tomar tu <b>${name}</b>${dosage}.\n` +
         `<i>Estaba desconectado o en reposo a ${laLas(time)}, por eso este recordatorio llega tarde.</i>`,
     missed: (time, name, dosage, windowMinutes) =>
         `⚠️ <b>Recordatorio perdido</b>\n\n` +
-        `Estaba desconectado a ${laLas(time)}, cuando tocaba tu <b>${name}</b> (${dosage}), ` +
+        `Estaba desconectado a ${laLas(time)}, cuando tocaba tu <b>${name}</b>${dosage}, ` +
         `y ya pasaron más de ${windowMinutes} min, así que no preguntaré por esta dosis.`,
     nag: (name, number) => `¿Ya tomaste tu <b>${name}</b>?\n(Recordatorio n.º ${number})`,
 
