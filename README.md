@@ -1,6 +1,8 @@
 # Pill Reminder Bot 💊
 
-A personal Telegram bot that sends scheduled pill reminders and tracks adherence.
+A Telegram bot that reminds you and your family to take your pills, keeps reminding until each person answers, alerts a caregiver when a dose goes unconfirmed, and logs every dose. It runs 24/7 on an **Android phone** (Termux) or a **free Linux server**.
+
+*Español:* bot de Telegram que recuerda a tu familia tomar sus pastillas, insiste hasta que cada persona responde, avisa a un cuidador si una dosis no se confirma y registra cada toma. Corre 24/7 en un **teléfono Android** (Termux) o en un **servidor Linux gratis**. Guía de instalación en español: [DEPLOY.es.md](DEPLOY.es.md).
 
 ## Features
 - Configurable pill schedule via `pills.json`
@@ -11,8 +13,10 @@ A personal Telegram bot that sends scheduled pill reminders and tracks adherence
 - Catches up on reminders missed while the bot was offline or the computer was asleep
 - **Several people** from one bot, each with their own pills, language, history and commands
 - **Caregiver alerts**: if someone doesn't answer after N reminders (default 3), their caregiver is told, and told again when they answer
+- `/estado` shows today's ✅ taken / ⏭️ skipped / ⏳ waiting per pill; caregivers also see everyone they look after
 - Only talks to the people in `pills.json`; everyone else is ignored
 - Spanish (default) or English, per person
+- Runs 24/7 on an Android phone (Termux, auto-starts after a reboot) or a free Linux server (systemd): see [DEPLOY.md](DEPLOY.md)
 - No browser, no extra packages: just Node.js and the official Telegram Bot API
 
 ## Setup
